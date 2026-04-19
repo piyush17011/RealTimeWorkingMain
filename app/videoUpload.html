@@ -126,7 +126,7 @@
 
 
             //Send frame to Flask backend
-            fetch("http://127.0.0.1:5000/predict", {
+            fetch("https://realtimeworkingmain.onrender.com/predict", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: `frame=${encodeURIComponent(frameData)}`,
