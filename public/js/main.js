@@ -317,30 +317,19 @@ videoToggleBtn.addEventListener("click", () => {
 // ─────────────────────────────────────────────
 // Screen sharing
 // ─────────────────────────────────────────────
-shareScreenBtn.addEventListener("click", () => {
-    if (isScreenSharing) stopScreenSharing();
-    else startScreenSharing();
-});
-stopScreenShareBtn.addEventListener("click", stopScreenSharing);
-
 const startScreenSharing = async () => {
     try {
         screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         screenShareTrack = screenStream.getVideoTracks()[0];
         localVideo.srcObject = screenStream;
-
         const pc = PeerConnection.getInstance();
         const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
         if (sender) sender.replaceTrack(screenShareTrack);
-
         screenShareTrack.onended = stopScreenSharing;
         isScreenSharing = true;
         shareScreenBtn.textContent = "Stop Share";
-    } catch (e) {
-        console.error("Screen share:", e);
-    }
+    } catch (e) {}
 };
-
 const stopScreenSharing = () => {
     if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; }
     if (localStream) {
@@ -357,6 +346,11 @@ const stopScreenSharing = () => {
     isScreenSharing = false;
     shareScreenBtn.textContent = "Share Screen";
 };
+shareScreenBtn.addEventListener("click", () => {
+    if (isScreenSharing) stopScreenSharing();
+    else startScreenSharing();
+});
+stopScreenShareBtn.addEventListener("click", stopScreenSharing);
 
 // ─────────────────────────────────────────────
 // Cleanup on page unload — remove user from server list
