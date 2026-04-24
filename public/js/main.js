@@ -1,4 +1,3 @@
-// HTML elements
 const createUserBtn = document.getElementById("create-user");
 const username = document.getElementById("username");
 const allusersHtml = document.getElementById("allusers");
@@ -7,50 +6,45 @@ const remoteVideo = document.getElementById("remoteVideo");
 const endCallBtn = document.getElementById("end-call-btn");
 const muteBtn = document.getElementById("mute-audio-btn");
 const videoToggleBtn = document.getElementById("toggle-video-btn");
-const shareScreenBtn = document.getElementById("share-screen-btn");  // Share screen button
-const stopScreenShareBtn = document.getElementById("stop-screen-share-btn"); 
-// Global variables
-let screenStream = null;  // Screen share stream
-let localStream = null;  // Local webcam stream
-let peerConnection = null;  // WebRTC peer connection
-let isScreenSharing = false;  // Flag to track screen sharing status
-let caller = [];  // Caller info
-let remoteScreenStream = null;  // Remote screen share stream
-let isRemoteScreenSharing = false; // Flag to track remote screen sharing status
+const shareScreenBtn = document.getElementById("share-screen-btn");
+const stopScreenShareBtn = document.getElementById("stop-screen-share-btn");
+
+let screenStream = null;
+let localStream = null;
+let isScreenSharing = false;
+let caller = [];
 let dataChannel = null;
+let screenShareTrack = null;
 
 const socket = io();
 
-// PeerConnection Singleton with Reset Functionality
-const PeerConnection = (function() {
+// ---- PeerConnection singleton ----
+const PeerConnection = (function () {
     let peerConnection;
 
     const createPeerConnection = () => {
-        const config = {
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        };
+        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
         peerConnection = new RTCPeerConnection(config);
 
-        // Add local stream
         if (localStream) {
-            localStream.getTracks().forEach(track => {
-                peerConnection.addTrack(track, localStream);
-            });
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
         }
-   // Data channel for captions
-    dataChannel = peerConnection.createDataChannel("captionChannel");
-    dataChannel.onopen = () => console.log("Data channel opened");
-    dataChannel.onmessage = (event) => {
-        // Display incoming caption
-        remoteCaptionText.innerText = `Remote: ${event.data}`;
-    };
-        // Listen for remote stream
-        peerConnection.ontrack = function(event) {
+
+        // Data channel for captions (caller side creates it)
+        dataChannel = peerConnection.createDataChannel("captionChannel");
+        setupDataChannelHandlers(dataChannel);
+
+        // Callee side: handle incoming data channel
+        peerConnection.ondatachannel = (event) => {
+            dataChannel = event.channel;
+            setupDataChannelHandlers(dataChannel);
+        };
+
+        peerConnection.ontrack = function (event) {
             remoteVideo.srcObject = event.streams[0];
         };
 
-        // Listen for ICE candidates
-        peerConnection.onicecandidate = function(event) {
+        peerConnection.onicecandidate = function (event) {
             if (event.candidate) {
                 socket.emit("icecandidate", event.candidate);
             }
@@ -66,70 +60,69 @@ const PeerConnection = (function() {
             }
             return peerConnection;
         },
-        reset: () => {
-            peerConnection = null;
-        }
+        reset: () => { peerConnection = null; }
     };
 })();
 
+// ---- Data channel handlers ----
 function setupDataChannelHandlers(channel) {
-    channel.onopen = () => {
-        console.log("Data channel opened");
-    };
-
     channel.onmessage = (event) => {
-        const { caption } = JSON.parse(event.data);
-        const captionsDiv = document.getElementById("captions");
-        if (captionsDiv) {
-            const p = document.createElement("p");
-
-            
-            p.innerHTML = `<strong>Peer:</strong> ${caption}`;
-            captionsDiv.appendChild(p);
+        try {
+            const { caption } = JSON.parse(event.data);
+            const el = document.getElementById("remoteCaptionText");
+            if (el && caption !== undefined) {
+                el.innerText = `Remote: ${caption}`;
+            }
+        } catch (e) {
+            // plain text fallback
+            const el = document.getElementById("remoteCaptionText");
+            if (el) el.innerText = `Remote: ${event.data}`;
         }
     };
-
-    channel.onerror = (err) => {
-        console.error("Data channel error:", err);
-    };
 }
 
-function sendCaption(captionText) {
-    if (dataChannel && dataChannel.readyState === "open") {
-        dataChannel.send(JSON.stringify({ caption: captionText }));
-    }
-}
-
-
-// Handle user joining
-createUserBtn.addEventListener("click", () => {
-    if (username.value !== "") {
-        const usernameContainer = document.querySelector(".username-input");
-        socket.emit("join-user", username.value);
-        usernameContainer.style.display = 'none';
+// ---- Socket: receive caption from remote user ----
+socket.on("caption-update", (data) => {
+    if (!data) return;
+    // Only show captions from OTHER users (not our own echo)
+    if (data.from && username.value && data.from === username.value) return;
+    const el = document.getElementById("remoteCaptionText");
+    if (el) {
+        el.innerText = `${data.from || 'Remote'}: ${data.caption || ''}`;
     }
 });
 
-// End call event
+// ---- Create user ----
+createUserBtn.addEventListener("click", () => {
+    if (username.value.trim() !== "") {
+        socket.emit("join-user", username.value.trim());
+        // Hide the input area after joining
+        const usernameSection = document.querySelector(".username-section");
+        if (usernameSection) usernameSection.style.display = "none";
+    }
+});
+
+// ---- End call ----
 endCallBtn.addEventListener("click", () => {
     socket.emit("call-ended", caller);
     endCall();
 });
 
-// Handle user list
+// ---- Render contacts list ----
 socket.on("joined", (allusers) => {
     allusersHtml.innerHTML = "";
     for (const user in allusers) {
         const li = document.createElement("li");
         li.textContent = `${user} ${user === username.value ? "(You)" : ""}`;
-        
+
         if (user !== username.value) {
             const button = document.createElement("button");
             button.classList.add("call-btn");
+            button.title = `Call ${user}`;
             button.addEventListener("click", () => startCall(user));
             const img = document.createElement("img");
             img.setAttribute("src", "/images/phone.png");
-            img.setAttribute("width", 20);
+            img.setAttribute("alt", "Call");
             button.appendChild(img);
             li.appendChild(button);
         }
@@ -138,133 +131,49 @@ socket.on("joined", (allusers) => {
     }
 });
 
-// Handle offer (receiver)
-// socket.on("offer", async ({ from, to, offer }) => {
-//     const pc = PeerConnection.getInstance();
-//     await pc.setRemoteDescription(offer);
-//     const answer = await pc.createAnswer();
-//     await pc.setLocalDescription(answer);
-//     socket.emit("answer", { from, to, answer: pc.localDescription });
-
-//     caller = [from, to];
-//     endCallBtn.style.display = "block"; // ✅ SHOW END CALL BUTTON
-// });
+// ---- WebRTC signalling ----
 socket.on("offer", async ({ from, to, offer }) => {
     const pc = PeerConnection.getInstance();
-
-    pc.ondatachannel = (event) => {
-        dataChannel = event.channel;
-        setupDataChannelHandlers(dataChannel); // Define below
-    };
-
     await pc.setRemoteDescription(offer);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     socket.emit("answer", { from, to, answer: pc.localDescription });
-
     caller = [from, to];
-    endCallBtn.style.display = "block";
+    endCallBtn.style.display = "flex";
 });
 
-
-// Handle answer (caller)
 socket.on("answer", async ({ from, to, answer }) => {
     const pc = PeerConnection.getInstance();
     await pc.setRemoteDescription(answer);
-
     caller = [from, to];
-    endCallBtn.style.display = "block"; // ✅ SHOW END CALL BUTTON
+    endCallBtn.style.display = "flex";
 });
-// Listen for the caption event from other users
 
-// Listen for the caption event (from User A)
-// Listen for the caption event
-// socket.on('caption', (data) => {
-//     // Display the caption with the username of the sender
-//     predictionText.innerText = `${data.username}: ${data.caption}`;
-// });
-// Listen for the caption event
-// socket.on('caption', (data) => {
-//     console.log("Received Caption:", data.username, data.caption);
-//     // Update the text of the predictionText element with username and caption
-//     predictionText.innerText = `${data.username}: ${data.caption}`;
-// });
-
-
-
-// Handle ICE candidates
 socket.on("icecandidate", async (candidate) => {
     const pc = PeerConnection.getInstance();
     await pc.addIceCandidate(new RTCIceCandidate(candidate));
 });
 
-// Handle end-call event
-socket.on("call-ended", () => {
-    endCall();
-});
+socket.on("call-ended", () => endCall());
 
-
-  
-
-socket.on('caption', (data) => {
-    // Update the predictionText element with the received caption
-    console.log(caption);
-    console.log(data.caption);
-    predictionText.innerText = `Caption: ${data.caption}`;
-});
-
-// Start call function
-// const startCall = async (user) => {
-//     const pc = PeerConnection.getInstance();
-//     const offer = await pc.createOffer();
-//     await pc.setLocalDescription(offer);
-//     socket.emit("offer", { from: username.value, to: user, offer: pc.localDescription });
-
-//     endCallBtn.style.display = "block"; // ✅ SHOW END CALL BUTTON FOR CALLER
-// };
+// ---- Start / end call ----
 const startCall = async (user) => {
     const pc = PeerConnection.getInstance();
-
-    // Create the data channel before offer
-    dataChannel = pc.createDataChannel("captions");
-
-    setupDataChannelHandlers(dataChannel); // Define below
-
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-
     socket.emit("offer", { from: username.value, to: user, offer: pc.localDescription });
-
-    endCallBtn.style.display = "block";
+    endCallBtn.style.display = "flex";
 };
 
-
-
-// End call function
 const endCall = () => {
     const pc = PeerConnection.getInstance();
-    if (pc) {
-        pc.close();
-    }
-
+    if (pc) pc.close();
     caller = [];
-    endCallBtn.style.display = "none"; // ✅ HIDE END CALL BUTTON
+    endCallBtn.style.display = "none";
     PeerConnection.reset();
 };
 
-// Start local video
-async function startMyVideo() {
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true, echoCancellation: true, 
-            noiseSuppression: true,
-            autoGainControl: true });
-        localVideo.srcObject = localStream;
-    } catch (error) {
-        console.error("Error accessing webcam:", error);
-    }
-}
-
-// Mute/Unmute audio
+// ---- Media controls ----
 muteBtn.addEventListener("click", () => {
     if (localStream) {
         const audioTrack = localStream.getAudioTracks()[0];
@@ -273,7 +182,6 @@ muteBtn.addEventListener("click", () => {
     }
 });
 
-// Toggle video on/off
 videoToggleBtn.addEventListener("click", () => {
     if (localStream) {
         const videoTrack = localStream.getVideoTracks()[0];
@@ -282,113 +190,53 @@ videoToggleBtn.addEventListener("click", () => {
     }
 });
 
-// Initialize the app
-startMyVideo();
+// ---- Screen sharing ----
+shareScreenBtn.addEventListener("click", () => {
+    if (isScreenSharing) stopScreenSharing();
+    else startScreenSharing();
+});
 
-// Start screen sharing
+stopScreenShareBtn.addEventListener("click", stopScreenSharing);
+
 const startScreenSharing = async () => {
     try {
-        // Request the screen sharing stream
         screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-
-        // Set the local video to the screen share stream
         localVideo.srcObject = screenStream;
-
-        // Add the screen sharing tracks to the peer connection
         const pc = PeerConnection.getInstance();
-
-        // First, remove existing webcam video tracks (if any)
-        localStream.getTracks().forEach(track => {
-            if (track.kind === "video") {
-                const sender = pc.getSenders().find(s => s.track.kind === "video");
-                if (sender) {
-                    sender.replaceTrack(screenStream.getVideoTracks()[0]);
-                }
-            }
-        });
-
-        // Add new screen sharing video track to the peer connection
-        screenShareTrack = screenStream.getVideoTracks()[0];  // Store screen share track
-        screenStream.getTracks().forEach(track => {
-            pc.addTrack(track, screenStream);
-        });
-
-        // When the screen sharing stops, restore the webcam stream
-        screenStream.getTracks().forEach(track => {
-            track.onended = () => {
-                stopScreenSharing();  // Stop screen sharing and revert to webcam
-            };
-        });
-
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+        screenShareTrack = screenStream.getVideoTracks()[0];
+        if (sender) sender.replaceTrack(screenShareTrack);
+        screenShareTrack.onended = stopScreenSharing;
         isScreenSharing = true;
     } catch (error) {
-        console.error("Error sharing screen:", error);
+        console.error("Screen share error:", error);
     }
 };
 
-// Stop screen sharing and revert to webcam
 const stopScreenSharing = () => {
-    if (screenStream) {
-        // Stop all screen tracks
-        screenStream.getTracks().forEach(track => track.stop());
-    }
-
-    // Restore the webcam stream
+    if (screenStream) screenStream.getTracks().forEach(t => t.stop());
     localVideo.srcObject = localStream;
-
-    // Replace screen tracks with webcam tracks in the peer connection
     const pc = PeerConnection.getInstance();
-
-    // Remove the screen share track from the peer connection
-    const senders = pc.getSenders();
-    senders.forEach(sender => {
-        if (sender.track === screenShareTrack) {
-            sender.replaceTrack(localStream.getVideoTracks()[0]);  // Replace with webcam track
-        }
-    });
-
-    // Add the webcam stream back to the peer connection
-    localStream.getTracks().forEach(track => {
-        if (track.kind === "video" && track !== screenShareTrack) {
-            pc.addTrack(track, localStream);
-        }
-    });
-
+    const sender = pc.getSenders().find(s => s.track === screenShareTrack);
+    if (sender && localStream) sender.replaceTrack(localStream.getVideoTracks()[0]);
     isScreenSharing = false;
 };
 
-// Handle screen sharing button
-shareScreenBtn.addEventListener("click", () => {
-    if (isScreenSharing) {
-        stopScreenSharing();  // Stop screen sharing if already active
-    } else {
-        startScreenSharing();  // Start screen sharing
-    }
-});
-
-// Handle stop screen share button (optional additional stop button)
-stopScreenShareBtn.addEventListener("click", () => {
-    stopScreenSharing();  // Stop screen sharing directly
-});
-
-// Handle remote screen share functionality
-socket.on("remote-screen-share", (stream) => {
-    remoteScreenStream = stream;
-    remoteVideo.srcObject = remoteScreenStream;  // Show remote screen share
-});
-
-// Handle remote user stopping screen share
-socket.on("stop-remote-screen-share", () => {
-    remoteVideo.srcObject = remoteStream;  // Show webcam video again
-});
-
-
-// Start local video (webcam)
+// ---- Start local video ----
 async function startMyVideo() {
     try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localStream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+            }
+        });
         localVideo.srcObject = localStream;
     } catch (error) {
-        console.error("Error accessing webcam:", error);
+        console.error("Camera/mic error:", error);
     }
 }
+
+startMyVideo();

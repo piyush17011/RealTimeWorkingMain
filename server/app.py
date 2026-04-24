@@ -10,26 +10,30 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-# Load trained model safely
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 model_path = os.path.join(BASE_DIR, '..', 'models', 'model.pkl')
 
 try:
     with open(model_path, 'rb') as file:
         model = pickle.load(file)
-    print("Model loaded successfully")
 except Exception as e:
-    print(f"Error loading model: {e}")
     model = None
-# Initialize MediaPipe Hands
+
 mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
-mp_drawing_styles = mp.solutions.drawing_styles
+
+# --- FIX: Initialize Hands ONCE as a module-level singleton ---
+# Previously, a new Hands() instance was created on every /predict request,
+# causing mediapipe to accumulate memory and exceed limits.
+hands_detector = mp_hands.Hands(
+    static_image_mode=True,
+    max_num_hands=2,
+    min_detection_confidence=0.5
+)
 
 @app.route('/predict', methods=['POST'])
 def predict():
     if model is None:
-        return jsonify({'error': 'Model not loaded'}), 500  # Return error if model is missing
+        return jsonify({'error': 'Model not loaded'}), 500
 
     try:
         if 'frame' not in request.form:
@@ -39,7 +43,10 @@ def predict():
         if not image_data:
             return jsonify({'error': 'Received empty image data'}), 400
 
-        # Decode base64 image
+        # Strip data URL prefix if present (e.g. "data:image/jpeg;base64,...")
+        if ',' in image_data:
+            image_data = image_data.split(',', 1)[1]
+
         image_bytes = base64.b64decode(image_data)
         nparr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -47,32 +54,37 @@ def predict():
         if img is None:
             return jsonify({'error': 'Failed to decode image'}), 400
 
-        # Convert to RGB for MediaPipe processing
+        # Resize to reduce memory usage on large frames
+        max_dim = 640
+        h, w = img.shape[:2]
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            img = cv2.resize(img, (int(w * scale), int(h * scale)))
+
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        # Process hand landmarks
-        with mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.5) as hands:
-            results = hands.process(img_rgb)
+        # Reuse the singleton hands_detector instead of creating a new one each time
+        results = hands_detector.process(img_rgb)
 
-            if not results.multi_hand_landmarks:
-                return jsonify({'prediction': ''})   #no hands
+        if not results.multi_hand_landmarks:
+            return jsonify({'prediction': ''})
 
-            data = []
-            for hand_landmarks in results.multi_hand_landmarks:
-                for point in mp_hands.HandLandmark:
-                    landmark = hand_landmarks.landmark[point]
-                    data.extend([landmark.x, landmark.y, landmark.z])  # Collect landmark data
+        data = []
+        for hand_landmarks in results.multi_hand_landmarks:
+            for point in mp_hands.HandLandmark:
+                landmark = hand_landmarks.landmark[point]
+                data.extend([landmark.x, landmark.y, landmark.z])
 
-            if len(data) != model.n_features_in_:  # Ensure correct feature size
-                return jsonify({'error': 'Incorrect input size for model'})
+        if len(data) != model.n_features_in_:
+            return jsonify({'error': 'Incorrect input size for model'})
 
-            # Make a prediction
-            prediction = model.predict([data])[0]
-
-            return jsonify({'prediction': prediction})
+        prediction = model.predict([data])[0]
+        return jsonify({'prediction': prediction})
 
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Use threaded=False to avoid race conditions on the shared hands_detector
+    # (mediapipe is not thread-safe for shared instances)
+    app.run(debug=False, threaded=False)
