@@ -123,18 +123,49 @@
             background: rgba(0,0,0,0.72); color: #fff;
             font-size: 0.875rem; font-weight: 500;
             padding: 6px 10px;
-            display: flex; align-items: center; justify-content: space-between;
+            display: flex; align-items: center; gap: 6px;
             min-height: 36px;
             backdrop-filter: blur(4px);
         }
-        .caption-bar p { flex: 1; margin: 0; font-size: 0.85rem; }
+        .caption-bar p {
+            flex: 1; margin: 0; font-size: 0.82rem;
+            min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
         .clear-caption-btn {
             border: none; background: #dc2626; color: #fff;
-            font-size: 0.7rem; padding: 2px 8px; border-radius: 4px;
-            cursor: pointer; margin-left: 8px; white-space: nowrap;
+            font-size: 0.68rem; padding: 2px 7px; border-radius: 4px;
+            cursor: pointer; white-space: nowrap; flex-shrink: 0;
             transition: background 0.15s;
         }
         .clear-caption-btn:hover { background: #b91c1c; }
+
+        /* Switch source button */
+        .switch-source-btn {
+            border: 1px solid rgba(255,255,255,0.4);
+            background: rgba(255,255,255,0.12); color: #fff;
+            font-size: 0.68rem; padding: 2px 7px; border-radius: 4px;
+            cursor: pointer; white-space: nowrap; flex-shrink: 0;
+            transition: background 0.15s;
+        }
+        .switch-source-btn:hover { background: rgba(255,255,255,0.28); }
+
+        /* Active captioning indicator */
+        .captioning-badge {
+            position: absolute; top: 8px; right: 10px;
+            background: rgba(22,163,74,0.88); color: #fff;
+            font-size: 0.68rem; font-weight: 700; padding: 2px 8px;
+            border-radius: 20px; display: none; align-items: center; gap: 4px;
+            backdrop-filter: blur(4px);
+        }
+        .captioning-badge.active { display: flex; }
+        .captioning-badge .dot {
+            width: 6px; height: 6px; border-radius: 50%; background: #fff;
+            animation: pulse-dot 1.2s ease-in-out infinite;
+        }
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50%       { opacity: 0.35; transform: scale(0.65); }
+        }
 
         /* Controls */
         .controls {
@@ -221,23 +252,33 @@
         <div class="video-grid" id="videoGrid">
 
             <!-- LOCAL VIDEO TILE -->
-            <div class="video-tile">
-                <span class="video-label">You</span>
+            <div class="video-tile" id="localTile">
+                <span class="video-label" id="localLabel">You</span>
+                <!-- Pulsing badge shown when this tile is being captioned -->
+                <div class="captioning-badge" id="localBadge">
+                    <span class="dot"></span> Captioning
+                </div>
                 <video id="localVideo" autoplay playsinline muted></video>
-                <!-- Caption bar inside local tile — shows YOUR signed captions -->
-                <div class="caption-bar" id="localCaptionBar">
+                <div class="caption-bar">
                     <p id="predictionText">Caption: ...</p>
+                    <!-- Switch to caption THIS tile's video -->
+                    <button class="switch-source-btn" id="switchToLocal">Caption this</button>
                     <button class="clear-caption-btn" id="clear-btn">Clear</button>
                 </div>
             </div>
 
             <!-- REMOTE VIDEO TILE -->
-            <div class="video-tile">
-                <span class="video-label">Remote</span>
+            <div class="video-tile" id="remoteTile">
+                <span class="video-label" id="remoteLabel">Remote</span>
+                <!-- Pulsing badge shown when this tile is being captioned -->
+                <div class="captioning-badge" id="remoteBadge">
+                    <span class="dot"></span> Captioning
+                </div>
                 <video id="remoteVideo" autoplay playsinline></video>
-                <!-- Caption bar inside remote tile — shows REMOTE person's captions -->
-                <div class="caption-bar" id="remoteCaptionBar">
+                <div class="caption-bar">
                     <p id="remoteCaptionText">Remote caption: ...</p>
+                    <!-- Switch to caption THIS tile's video -->
+                    <button class="switch-source-btn" id="switchToRemote">Caption this</button>
                 </div>
             </div>
         </div>
@@ -259,62 +300,117 @@
 <canvas id="canvas" style="display:none;"></canvas>
 
 <script>
-// ---- Sidebar mobile toggle ----
-const sidebarToggle = document.getElementById('sidebarToggle');
-const sidebar = document.getElementById('sidebar');
-sidebarToggle.addEventListener('click', () => {
-    sidebar.classList.toggle('collapsed');
+// ── Sidebar mobile toggle ─────────────────────────────────────────────────────
+document.getElementById('sidebarToggle').addEventListener('click', () => {
+    document.getElementById('sidebar').classList.toggle('collapsed');
 });
 
-// ---- Caption: clear local captions ----
-document.getElementById("clear-btn").addEventListener("click", function () {
-    document.getElementById("predictionText").innerText = "Caption: ...";
-    sentence = [];
-    lastWord = "";
-});
-</script>
-
-<!-- Inline caption + frame-send script (operates on remoteVideo for gesture detection) -->
-<script>
-const captionCanvas = document.createElement('canvas');
-const captionCtx = captionCanvas.getContext('2d');
+// ── Caption source state ──────────────────────────────────────────────────────
+// 'local'  = draw frames from localVideo  (default)
+// 'remote' = draw frames from remoteVideo
+let captionSource = 'local';
 let sentence = [];
-let lastWord = "";
+let lastWord  = "";
 
-function speakText(text) {
-    if ('speechSynthesis' in window) {
-        const speech = new SpeechSynthesisUtterance(text);
-        speech.lang = 'en';
-        speech.rate = 1;
-        speech.volume = 1;
-        window.speechSynthesis.speak(speech);
+const captionCanvas = document.createElement('canvas');
+const captionCtx    = captionCanvas.getContext('2d');
+
+// Update the pulsing badge and switch button labels to reflect current source
+function updateSourceUI() {
+    const localBadge    = document.getElementById('localBadge');
+    const remoteBadge   = document.getElementById('remoteBadge');
+    const switchToLocal  = document.getElementById('switchToLocal');
+    const switchToRemote = document.getElementById('switchToRemote');
+
+    if (captionSource === 'local') {
+        localBadge.classList.add('active');
+        remoteBadge.classList.remove('active');
+        switchToLocal.textContent  = '✓ Captioning';
+        switchToLocal.style.background  = 'rgba(22,163,74,0.5)';
+        switchToLocal.style.borderColor = 'rgba(22,163,74,0.8)';
+        switchToRemote.textContent = 'Caption this';
+        switchToRemote.style.background  = '';
+        switchToRemote.style.borderColor = '';
+    } else {
+        remoteBadge.classList.add('active');
+        localBadge.classList.remove('active');
+        switchToRemote.textContent = '✓ Captioning';
+        switchToRemote.style.background  = 'rgba(22,163,74,0.5)';
+        switchToRemote.style.borderColor = 'rgba(22,163,74,0.8)';
+        switchToLocal.textContent  = 'Caption this';
+        switchToLocal.style.background  = '';
+        switchToLocal.style.borderColor = '';
     }
 }
 
-// Send LOCAL video frames to Python server; update local caption bar and broadcast via socket
+// Switch to local video as caption source
+document.getElementById('switchToLocal').addEventListener('click', () => {
+    if (captionSource === 'local') return;
+    captionSource = 'local';
+    sentence = []; lastWord = "";
+    document.getElementById('predictionText').innerText = 'Caption: ...';
+    updateSourceUI();
+    // Tell the remote peer what WE switched to, so they can show it too
+    if (typeof socket !== 'undefined' && username.value) {
+        socket.emit('caption-source-change', { from: username.value, source: 'local' });
+    }
+});
+
+// Switch to remote video as caption source
+document.getElementById('switchToRemote').addEventListener('click', () => {
+    if (captionSource === 'remote') return;
+    captionSource = 'remote';
+    sentence = []; lastWord = "";
+    document.getElementById('predictionText').innerText = 'Caption: ...';
+    updateSourceUI();
+    if (typeof socket !== 'undefined' && username.value) {
+        socket.emit('caption-source-change', { from: username.value, source: 'remote' });
+    }
+});
+
+// Clear button
+document.getElementById('clear-btn').addEventListener('click', () => {
+    sentence = []; lastWord = "";
+    document.getElementById('predictionText').innerText = 'Caption: ...';
+});
+
+// ── TTS ───────────────────────────────────────────────────────────────────────
+function speakText(text) {
+    if ('speechSynthesis' in window) {
+        const s = new SpeechSynthesisUtterance(text);
+        s.lang = 'en'; s.rate = 1; s.volume = 1;
+        window.speechSynthesis.speak(s);
+    }
+}
+
+// ── Frame capture & predict ───────────────────────────────────────────────────
 async function sendFrame() {
-    const localVideo = document.getElementById('localVideo');
-    if (!localVideo || !localVideo.srcObject || localVideo.readyState < 2) return;
-    if (localVideo.videoWidth === 0) return;
+    // Pick which video element to draw from
+    const sourceEl = captionSource === 'local'
+        ? document.getElementById('localVideo')
+        : document.getElementById('remoteVideo');
 
-    captionCanvas.width = localVideo.videoWidth;
-    captionCanvas.height = localVideo.videoHeight;
-    captionCtx.drawImage(localVideo, 0, 0, captionCanvas.width, captionCanvas.height);
+    if (!sourceEl || !sourceEl.srcObject || sourceEl.readyState < 2) return;
+    if (sourceEl.videoWidth === 0) return;
 
-    const frameData = captionCanvas.toDataURL("image/jpeg", 0.6).split(",")[1];
+    captionCanvas.width  = sourceEl.videoWidth;
+    captionCanvas.height = sourceEl.videoHeight;
+    captionCtx.drawImage(sourceEl, 0, 0, captionCanvas.width, captionCanvas.height);
+
+    const frameData = captionCanvas.toDataURL('image/jpeg', 0.6).split(',')[1];
 
     try {
-        const response = await fetch("https://realtimeworkingmain.onrender.com/predict", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        const response = await fetch('https://realtimeworkingmain.onrender.com/predict', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: `frame=${encodeURIComponent(frameData)}`,
         });
-
         if (!response.ok) return;
-        const result = await response.json();
-        let newWord = (result.prediction || '').trim();
 
-        if (newWord && newWord !== "None" && newWord.toLowerCase() !== "no hands detected") {
+        const result  = await response.json();
+        const newWord = (result.prediction || '').trim();
+
+        if (newWord && newWord !== 'None' && newWord.toLowerCase() !== 'no hands detected') {
             if (newWord !== lastWord) {
                 sentence.push(newWord);
                 lastWord = newWord;
@@ -322,46 +418,46 @@ async function sendFrame() {
             }
         }
 
-        const captionStr = sentence.join(" ");
-        // Update LOCAL caption bar (visible to local user)
-        document.getElementById("predictionText").innerText = `Caption: ${captionStr}`;
+        const captionStr = sentence.join(' ');
 
-        // Broadcast caption to the remote peer via socket
-        if (typeof socket !== 'undefined' && typeof username !== 'undefined' && username.value) {
-            socket.emit("caption-update", {
-                from: username.value,
-                caption: captionStr
-            });
+        // Always update the local display (predictionText shows what WE are captioning)
+        document.getElementById('predictionText').innerText = `Caption: ${captionStr}`;
+
+        // Broadcast via socket so the remote peer's bar updates
+        if (typeof socket !== 'undefined' && username.value) {
+            socket.emit('caption-update', { from: username.value, caption: captionStr });
         }
-
-        // Also send via WebRTC data channel if available
-        if (typeof dataChannel !== 'undefined' && dataChannel && dataChannel.readyState === "open") {
+        // Also over WebRTC data channel
+        if (typeof dataChannel !== 'undefined' && dataChannel && dataChannel.readyState === 'open') {
             dataChannel.send(JSON.stringify({ caption: captionStr }));
         }
 
-    } catch (error) {
-        // Swallow fetch errors silently (server might be cold-starting)
-    }
+    } catch (_) { /* server cold-starting, ignore */ }
 }
 
-// Listen for remote captions via socket — update REMOTE caption bar
-document.addEventListener('DOMContentLoaded', () => {
-    // Wait for socket to be defined by main.js
-    const waitForSocket = setInterval(() => {
-        if (typeof socket !== 'undefined') {
-            clearInterval(waitForSocket);
+// ── Socket listeners (wait for main.js to define socket) ─────────────────────
+const waitForSocket = setInterval(() => {
+    if (typeof socket === 'undefined') return;
+    clearInterval(waitForSocket);
 
-            socket.on("caption-update", (data) => {
-                if (data && data.caption !== undefined) {
-                    document.getElementById("remoteCaptionText").innerText =
-                        `${data.from || 'Remote'}: ${data.caption}`;
-                }
-            });
-        }
-    }, 200);
-});
+    // Remote user's caption → update remoteCaptionText
+    socket.on('caption-update', (data) => {
+        if (!data || !data.caption === undefined) return;
+        if (data.from && username.value && data.from === username.value) return;
+        document.getElementById('remoteCaptionText').innerText =
+            `${data.from || 'Remote'}: ${data.caption}`;
+    });
 
-// Capture every 2 seconds
+    // Remote user switched their caption source — just informational, log it
+    socket.on('caption-source-change', (data) => {
+        if (!data) return;
+        // You could show a toast here if desired; for now silently noted
+        console.log(`${data.from} switched caption source to: ${data.source}`);
+    });
+}, 150);
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+updateSourceUI();
 setInterval(sendFrame, 2000);
 </script>
 

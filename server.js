@@ -80,6 +80,10 @@ io.on("connection", (socket) => {
         socket.broadcast.emit("caption-update", data);
     });
 
+    socket.on("caption-source-change", (data) => {
+        socket.broadcast.emit("caption-source-change", data);
+    });
+
     // ── Disconnect (tab closed, network drop, refresh without beforeunload) ──
     socket.on("disconnect", () => {
         const username = socketToUser[socket.id];
