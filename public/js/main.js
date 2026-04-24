@@ -32,11 +32,7 @@ async function startMyVideo(retrying = false) {
         }
 
         localStream = await navigator.mediaDevices.getUserMedia({
-            video: {
-                facingMode: "user",       // front camera on mobile
-                width:  { ideal: 1280 },
-                height: { ideal: 720  }
-            },
+            video: { facingMode: "user" },  // no resolution constraints — let the camera use its natural FOV
             audio: true
         });
 
