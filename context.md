@@ -5089,327 +5089,407 @@ RealTimeWorkingMain/
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video Calling App</title>
-
-
+    <title>Video Call - RTSLD</title>
     <script src="https://cdn.tailwindcss.com"></script>
-
     <script src="/js/socket.io.js" defer></script>
     <script src="/js/main.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-</head>
-<body class="bg-gray-100 font-sans flex flex-col h-screen">
-
-    <main class="flex flex-1">
-
-        <aside class="w-72 bg-white border-r p-4 shadow-md">
-            <h1 class="text-2xl font-semibold mb-4 text-gray-800">Contacts</h1>
-            <ul id="allusers" class="space-y-2 text-gray-700"></ul>
-        </aside>
-
-
-        <section class="flex-1 flex flex-col items-center justify-center p-6 space-y-6">
-            <div class="w-full max-w-md">
-                <input id="username" type="text" placeholder="Enter Username"
-                    class="w-full h-12 p-4 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                <button id="create-user"
-                    class="w-full h-12 mt-3 bg-green-600 text-white rounded-lg text-lg font-semibold hover:bg-green-700 transition">
-                    Create
-                </button>
-            </div>
-
-            <div class="space-x-4">
-                <button id="share-screen-btn"
-                    class="bg-blue-500 text-white py-2 px-4 rounded-lg shadow-md hover:bg-blue-700 transition">
-                    Share Screen
-                </button>
-                <button id="stop-screen-share-btn"
-                    class="bg-red-500 text-white py-2 px-4 rounded-lg shadow-md hover:bg-red-700 transition">
-                    Stop Screen
-                </button>
-            </div>
-
-            <div class="w-full flex flex-col items-center space-y-4">
-                <div class="flex gap-8 w-full max-w-4xl">
-
-                    <div class="relative w-1/2 h-80 bg-black rounded-lg overflow-hidden shadow-lg">
-                        <video id="localVideo" autoplay playsinline class="w-full h-full"></video>
-
-                    </div>
-                                        <div id="captionBox"
-                        class="absolute bottom-[-10px] left-1/2 transform -translate-x-1/2 bg-black bg-opacity-70 text-white text-lg font-semibold p-3 rounded-lg h-11 w-3/5 flex justify-between items-center shadow-lg">
-
-                        <p id="predictionText" class="pl-4 flex-grow">Caption: ...</p>
-
-
-                        <button id="clear-btn"
-                                class="bg-red-600 text-white py-2 px-3 rounded-lg shadow-md hover:bg-red-700 transition">
-                                Clear
-                            </button>
-                    </div>
-
-
-
-
-
-
-
-
-                    <div class="w-1/2 h-80 bg-black rounded-lg overflow-hidden shadow-lg">
-                        <video id="remoteVideo" autoplay playsinline class="w-full h-full"></video>
-                    </div>
-                </div>
-
-                <div class="flex gap-4">
-                    <button id="mute-audio-btn"
-                        class="bg-gray-800 text-white py-2 px-4 rounded-lg hover:bg-gray-700 transition shadow-md">
-                        Mute
-                    </button>
-                    <button id="toggle-video-btn"
-                        class="bg-gray-800 text-white py-2 px-4 rounded-lg hover:bg-gray-700 transition shadow-md">
-                        Video Off
-                    </button>
-                </div>
-
-                <button id="end-call-btn"
-                    class="hidden bg-red-600 text-white w-16 h-16 rounded-full flex items-center justify-center shadow-lg hover:bg-red-700 transition">
-                    <img src="/images/phone-disconnect.png" alt="End Call" class="w-8 h-8" />
-                </button>
-            </div>
-        </section>
-    </main>
-
-
-
-    <canvas id="handCanvas" class="absolute top-0 left-0 w-full h-full pointer-events-none"></canvas>
-
-
-    <canvas id="canvas" class="hidden"></canvas>
-
-
-
-   <button onclick="location.href='/'"
-class="fixed top-20 right-10 bg-red-600 text-white px-6 py-3 rounded-lg shadow-md text-lg font-semibold hover:bg-blue-700 transition">
-Home
-</button>
-<button onclick="window.open('/page2', '_blank')"
-class="fixed top-4 right-7 bg-orange-600 text-white px-6 py-3 rounded-lg shadow-md text-lg font-semibold hover:bg-blue-700 transition">
-Go to Video Upload Section
-</button>
-
-
-
-
-</body>
-
-
-
-
-
-<script>
-const video = document.getElementById("remoteVideo");
-const canvas = document.createElement("canvas");
-const ctx = canvas.getContext("2d");
-const remoteCanvas = document.createElement("canvas");
-const remoteCtx = remoteCanvas.getContext("2d");
-let remoteCaptionText = document.getElementById("remoteCaptionText");
-const predictionText = document.getElementById("predictionText");
-
-let sentence = [];
-let lastWord = "";  // Stores last word to avoid duplication
-
-
-        let isTabActive = true;
-
-            // Detect when the user switches tabs
-            document.addEventListener("visibilitychange", () => {
-                isTabActive = !document.hidden; // `false` when tab is inactive, `true` when active
-            });
-
-// Function for Text-to-Speech (TTS)
-function speakText(text) {
-            if ('speechSynthesis' in window) {
-                let speech = new SpeechSynthesisUtterance(text);
-                speech.lang = 'en'; // Set language                //hi=hindi en = english
-                speech.rate = 1; // Normal speed
-                speech.volume = 1; // Max volume
-                window.speechSynthesis.speak(speech);
-            } else {
-                console.log("Text-to-Speech not supported in this browser.");
-            }
+    <style>
+        :root {
+            --primary: #BF4408;
+            --primary-hover: #E65103;
+            --bg-light: #FBFAF9;
+            --text-dark: #191818;
         }
-
-//         async function sendFrame() {
-//     if (!localVideo || localVideo.readyState !== 4) return;
-//     if (!localVideo || !localVideo.srcObject || localVideo.readyState < 2) {
-//         console.warn("Local video not ready yet...");
-//         return;
-//     }
-
-//     // Capture the local video frame
-//     canvas.width = localVideo.videoWidth;
-//     canvas.height = localVideo.videoHeight;
-//     ctx.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
-//     const frameData = canvas.toDataURL("image/jpeg").split(",")[1];
-
-//     // Send frame for caption prediction (local stream)
-//     try {
-//         const response = await fetch("https://realtimeworkingmain.onrender.com/predict", {
-//             method: "POST",
-//             headers: { "Content-Type": "application/x-www-form-urlencoded" },
-//             body: `frame=${encodeURIComponent(frameData)}`,
-//         });
-
-//         const result = await response.json();
-//         let newWord = result.prediction.trim();
-
-//         if (newWord && newWord !== "None" && newWord.toLowerCase() !== "no hands detected") {
-//             if (newWord !== lastWord) {
-//                 sentence.push(newWord);
-//                 lastWord = newWord;
-//                 speakText(newWord);
-//             }
-//         }
-
-//         // Update caption box
-//         predictionText.innerText = `Caption: ${sentence.join(" ")}`;
-//     } catch (error) {
-//         console.error("Error sending frame:", error);
-//     }
-// }
-
-
-//         async function sendFrame() {
-//     if (!video || video.readyState !== 4) return;
-//     if (!video || !video.srcObject || video.readyState < 2) {
-//         console.warn("Video not ready yet...");
-//         return;
-//     }
-//     // Capture the video frame
-//     canvas.width = video.videoWidth;
-//     canvas.height = video.videoHeight;
-//     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-//     // Convert frame to base64
-//     const frameData = canvas.toDataURL("image/jpeg").split(",")[1];
-
-//     try {
-//         const response = await fetch("https://realtimeworkingmain.onrender.com/predict", {
-//             method: "POST",
-//             headers: { "Content-Type": "application/x-www-form-urlencoded" },
-//             body: `frame=${encodeURIComponent(frameData)}`,
-//         });
-
-//         const result = await response.json();
-//         let newWord = result.prediction.trim();
-
-//         // Ignore "No hands detected"
-//         if (newWord && newWord !== "None" && newWord.toLowerCase() !== "no hands detected") {
-//             // Add word to sentence only if it's different from the last one
-//             if (newWord !== lastWord) {
-//                 sentence.push(newWord);
-//                 lastWord = newWord;  // Update last word to prevent immediate repetition
-//                 speakText(newWord);
-//             }
-//         }
-
-//         // Send the caption with the username
-//         // Send the caption along with the username
-//         console.log("Sending Caption:", username.value, sentence.join(" "));
-
-// socket.emit('caption', {
-//     caption: sentence.join(" "),  // The actual caption
-//     username: username.value // Include the username here
-// });
-
-
-//         // Display the full sentence
-//         predictionText.innerText = `Caption: ${sentence.join(" ")}`;
-
-//     } catch (error) {
-//         console.error("Error sending frame:", error);
-//     }
-// }
-
-
-async function sendFrame() {
-    if (!video || video.readyState !== 4) return;
-    if (!video || !video.srcObject || video.readyState < 2) {
-        console.warn("Video not ready yet...");
-        return;
+        body { background: var(--bg-light); font-family: 'Segoe UI', sans-serif; }
+        /* Navbar consistent with home */
+        .site-nav {
+            background: #fff;
+            border-bottom: 1px solid #e5e7eb;
+            position: sticky; top: 0; z-index: 50;
+        }
+        .nav-inner {
+            max-width: 1400px; margin: 0 auto;
+            padding: 0.75rem 1.5rem;
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .nav-logo { font-size: 1.5rem; font-weight: 700; color: var(--primary); text-decoration: none; }
+        .nav-links { display: flex; gap: 1rem; align-items: center; }
+        .nav-links a {
+            color: #374151; text-decoration: none; font-size: 0.9rem;
+            padding: 0.4rem 0.75rem; border-radius: 6px; transition: background 0.2s;
+        }
+        .nav-links a:hover { background: #fef3ee; color: var(--primary); }
+        .nav-btn {
+            background: var(--primary); color: #fff;
+            padding: 0.4rem 1rem; border-radius: 20px; font-size: 0.875rem;
+            text-decoration: none; transition: background 0.2s;
+        }
+        .nav-btn:hover { background: var(--primary-hover); }
+        /* Layout */
+        .page-layout { display: flex; height: calc(100vh - 57px); overflow: hidden; }
+        /* Sidebar */
+        .sidebar {
+            width: 260px; min-width: 260px; background: #fff;
+            border-right: 1px solid #e5e7eb; display: flex; flex-direction: column;
+            transition: transform 0.3s;
+        }
+        .sidebar-header {
+            padding: 1rem 1.25rem; border-bottom: 1px solid #e5e7eb;
+            font-size: 1.1rem; font-weight: 600; color: var(--text-dark);
+        }
+        #allusers { flex: 1; overflow-y: auto; padding: 0.5rem; }
+        #allusers li {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0.6rem 0.75rem; border-radius: 8px; cursor: pointer;
+            font-size: 0.9rem; color: #374151; margin-bottom: 2px;
+            transition: background 0.15s;
+        }
+        #allusers li:hover { background: #fef3ee; }
+        .call-btn {
+            border: none; background: transparent; cursor: pointer;
+            padding: 4px; border-radius: 6px; transition: background 0.15s;
+        }
+        .call-btn:hover { background: #fee2e2; }
+        .call-btn img { width: 18px; height: 18px; display: block; }
+        /* Username input */
+        .username-section {
+            padding: 1rem 1.25rem; border-top: 1px solid #e5e7eb;
+        }
+        .username-section input {
+            width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #d1d5db;
+            border-radius: 8px; font-size: 0.875rem; outline: none;
+            transition: border-color 0.2s;
+        }
+        .username-section input:focus { border-color: var(--primary); }
+        .username-section button {
+            margin-top: 0.5rem; width: 100%; padding: 0.5rem;
+            background: #16a34a; color: #fff; border: none; border-radius: 8px;
+            font-size: 0.875rem; font-weight: 600; cursor: pointer;
+            transition: background 0.2s;
+        }
+        .username-section button:hover { background: #15803d; }
+        /* Main video area */
+        .video-area {
+            flex: 1; display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            padding: 1.25rem; gap: 1rem; overflow: auto;
+        }
+        /* Video grid */
+        .video-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            width: 100%; max-width: 960px;
+        }
+        /* Individual video tile */
+        .video-tile {
+            position: relative; background: #111; border-radius: 12px;
+            overflow: hidden; aspect-ratio: 16/9;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+        }
+        .video-tile video { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .video-label {
+            position: absolute; top: 8px; left: 10px;
+            background: rgba(0,0,0,0.55); color: #fff;
+            font-size: 0.75rem; font-weight: 600; padding: 2px 8px;
+            border-radius: 20px; backdrop-filter: blur(4px);
+        }
+        /* Caption bar — sits INSIDE each tile at the bottom */
+        .caption-bar {
+            position: absolute; bottom: 0; left: 0; right: 0;
+            background: rgba(0,0,0,0.72); color: #fff;
+            font-size: 0.875rem; font-weight: 500;
+            padding: 6px 10px;
+            display: flex; align-items: center; gap: 6px;
+            min-height: 36px;
+            backdrop-filter: blur(4px);
+        }
+        .caption-bar p {
+            flex: 1; margin: 0; font-size: 0.82rem;
+            min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .clear-caption-btn {
+            border: none; background: #dc2626; color: #fff;
+            font-size: 0.68rem; padding: 2px 7px; border-radius: 4px;
+            cursor: pointer; white-space: nowrap; flex-shrink: 0;
+            transition: background 0.15s;
+        }
+        .clear-caption-btn:hover { background: #b91c1c; }
+        /* Switch source button */
+        .switch-source-btn {
+            border: 1px solid rgba(255,255,255,0.4);
+            background: rgba(255,255,255,0.12); color: #fff;
+            font-size: 0.68rem; padding: 2px 7px; border-radius: 4px;
+            cursor: pointer; white-space: nowrap; flex-shrink: 0;
+            transition: background 0.15s;
+        }
+        .switch-source-btn:hover { background: rgba(255,255,255,0.28); }
+        /* Active captioning indicator */
+        .captioning-badge {
+            position: absolute; top: 8px; right: 10px;
+            background: rgba(22,163,74,0.88); color: #fff;
+            font-size: 0.68rem; font-weight: 700; padding: 2px 8px;
+            border-radius: 20px; display: none; align-items: center; gap: 4px;
+            backdrop-filter: blur(4px);
+        }
+        .captioning-badge.active { display: flex; }
+        .captioning-badge .dot {
+            width: 6px; height: 6px; border-radius: 50%; background: #fff;
+            animation: pulse-dot 1.2s ease-in-out infinite;
+        }
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50%       { opacity: 0.35; transform: scale(0.65); }
+        }
+        /* Controls */
+        .controls {
+            display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center;
+        }
+        .ctrl-btn {
+            padding: 0.5rem 1.1rem; border: none; border-radius: 8px;
+            font-size: 0.875rem; font-weight: 500; cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+        }
+        .ctrl-btn:active { transform: scale(0.97); }
+        .ctrl-btn.grey { background: #374151; color: #fff; }
+        .ctrl-btn.grey:hover { background: #1f2937; }
+        .ctrl-btn.blue { background: #2563eb; color: #fff; }
+        .ctrl-btn.blue:hover { background: #1d4ed8; }
+        .ctrl-btn.red-soft { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
+        .ctrl-btn.red-soft:hover { background: #fca5a5; }
+        .end-call-btn {
+            width: 52px; height: 52px; border-radius: 50%; border: none;
+            background: #dc2626; cursor: pointer;
+            display: none; align-items: center; justify-content: center;
+            box-shadow: 0 4px 12px rgba(220,38,38,0.4);
+            transition: background 0.2s, transform 0.1s;
+        }
+        .end-call-btn:hover { background: #b91c1c; }
+        .end-call-btn img { width: 22px; height: 22px; }
+        /* Mobile sidebar toggle */
+        .sidebar-toggle {
+            display: none;
+            background: none; border: 1px solid #d1d5db; border-radius: 6px;
+            padding: 4px 8px; cursor: pointer; font-size: 1.2rem;
+        }
+        /* ---- RESPONSIVE ---- */
+        @media (max-width: 768px) {
+            .page-layout { flex-direction: column; height: auto; min-height: calc(100vh - 57px); }
+            .sidebar {
+                width: 100%; min-width: unset;
+                border-right: none; border-bottom: 1px solid #e5e7eb;
+                max-height: 220px;
+            }
+            .sidebar.collapsed { max-height: 52px; overflow: hidden; }
+            .sidebar-toggle { display: inline-block; }
+            .video-grid { grid-template-columns: 1fr; }
+            .video-area { padding: 0.75rem; }
+        }
+        @media (max-width: 480px) {
+            .controls { gap: 0.4rem; }
+            .ctrl-btn { font-size: 0.8rem; padding: 0.4rem 0.75rem; }
+        }
+    </style>
+</head>
+<body>
+<nav class="site-nav">
+    <div class="nav-inner">
+        <a href="/" class="nav-logo">RTSLD</a>
+        <div class="nav-links">
+            <button class="sidebar-toggle" id="sidebarToggle" title="Toggle contacts">☰</button>
+            <a href="/">Home</a>
+            <a href="/about">About</a>
+            <a href="/page2" class="nav-btn">Video Upload</a>
+        </div>
+    </div>
+</nav>
+<div class="page-layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">Contacts</div>
+        <ul id="allusers"></ul>
+        <div class="username-section">
+            <input id="username" type="text" placeholder="Enter your username" />
+            <button id="create-user">Join</button>
+        </div>
+    </aside>
+    <main class="video-area">
+        <div class="video-grid" id="videoGrid">
+            <div class="video-tile" id="localTile">
+                <span class="video-label" id="localLabel">You</span>
+                <div class="captioning-badge" id="localBadge">
+                    <span class="dot"></span> Captioning
+                </div>
+                <video id="localVideo" autoplay playsinline muted></video>
+                <div class="caption-bar">
+                    <p id="predictionText">Caption: ...</p>
+                    <button class="switch-source-btn" id="switchToLocal">Caption this</button>
+                    <button class="clear-caption-btn" id="clear-btn">Clear</button>
+                </div>
+            </div>
+            <div class="video-tile" id="remoteTile">
+                <span class="video-label" id="remoteLabel">Remote</span>
+                <div class="captioning-badge" id="remoteBadge">
+                    <span class="dot"></span> Captioning
+                </div>
+                <video id="remoteVideo" autoplay playsinline></video>
+                <div class="caption-bar">
+                    <p id="remoteCaptionText">Remote caption: ...</p>
+                    <button class="switch-source-btn" id="switchToRemote">Caption this</button>
+                </div>
+            </div>
+        </div>
+        <div class="controls">
+            <button id="mute-audio-btn" class="ctrl-btn grey">Mute</button>
+            <button id="toggle-video-btn" class="ctrl-btn grey">Video Off</button>
+            <button id="share-screen-btn" class="ctrl-btn blue">Share Screen</button>
+            <button id="stop-screen-share-btn" class="ctrl-btn red-soft">Stop Share</button>
+            <button id="end-call-btn" class="end-call-btn" title="End Call">
+                <img src="/images/phone-disconnect.png" alt="End Call" />
+            </button>
+        </div>
+    </main>
+</div>
+<canvas id="canvas" style="display:none;"></canvas>
+<script>
+// ── Sidebar mobile toggle ─────────────────────────────────────────────────────
+document.getElementById('sidebarToggle').addEventListener('click', () => {
+    document.getElementById('sidebar').classList.toggle('collapsed');
+});
+// ── Caption source state ──────────────────────────────────────────────────────
+// 'local'  = draw frames from localVideo  (default)
+// 'remote' = draw frames from remoteVideo
+let captionSource = 'local';
+let sentence = [];
+let lastWord  = "";
+const captionCanvas = document.createElement('canvas');
+const captionCtx    = captionCanvas.getContext('2d');
+// Update the pulsing badge and switch button labels to reflect current source
+function updateSourceUI() {
+    const localBadge    = document.getElementById('localBadge');
+    const remoteBadge   = document.getElementById('remoteBadge');
+    const switchToLocal  = document.getElementById('switchToLocal');
+    const switchToRemote = document.getElementById('switchToRemote');
+    if (captionSource === 'local') {
+        localBadge.classList.add('active');
+        remoteBadge.classList.remove('active');
+        switchToLocal.textContent  = '✓ Captioning';
+        switchToLocal.style.background  = 'rgba(22,163,74,0.5)';
+        switchToLocal.style.borderColor = 'rgba(22,163,74,0.8)';
+        switchToRemote.textContent = 'Caption this';
+        switchToRemote.style.background  = '';
+        switchToRemote.style.borderColor = '';
+    } else {
+        remoteBadge.classList.add('active');
+        localBadge.classList.remove('active');
+        switchToRemote.textContent = '✓ Captioning';
+        switchToRemote.style.background  = 'rgba(22,163,74,0.5)';
+        switchToRemote.style.borderColor = 'rgba(22,163,74,0.8)';
+        switchToLocal.textContent  = 'Caption this';
+        switchToLocal.style.background  = '';
+        switchToLocal.style.borderColor = '';
     }
-    // Capture the video frame
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    // Convert frame to base64
-    const frameData = canvas.toDataURL("image/jpeg").split(",")[1];
-
+}
+// Switch to local video as caption source
+document.getElementById('switchToLocal').addEventListener('click', () => {
+    if (captionSource === 'local') return;
+    captionSource = 'local';
+    sentence = []; lastWord = "";
+    document.getElementById('predictionText').innerText = 'Caption: ...';
+    updateSourceUI();
+    // Tell the remote peer what WE switched to, so they can show it too
+    if (typeof socket !== 'undefined' && username.value) {
+        socket.emit('caption-source-change', { from: username.value, source: 'local' });
+    }
+});
+// Switch to remote video as caption source
+document.getElementById('switchToRemote').addEventListener('click', () => {
+    if (captionSource === 'remote') return;
+    captionSource = 'remote';
+    sentence = []; lastWord = "";
+    document.getElementById('predictionText').innerText = 'Caption: ...';
+    updateSourceUI();
+    if (typeof socket !== 'undefined' && username.value) {
+        socket.emit('caption-source-change', { from: username.value, source: 'remote' });
+    }
+});
+// Clear button
+document.getElementById('clear-btn').addEventListener('click', () => {
+    sentence = []; lastWord = "";
+    document.getElementById('predictionText').innerText = 'Caption: ...';
+});
+// ── TTS ───────────────────────────────────────────────────────────────────────
+function speakText(text) {
+    if ('speechSynthesis' in window) {
+        const s = new SpeechSynthesisUtterance(text);
+        s.lang = 'en'; s.rate = 1; s.volume = 1;
+        window.speechSynthesis.speak(s);
+    }
+}
+// ── Frame capture & predict ───────────────────────────────────────────────────
+async function sendFrame() {
+    // Pick which video element to draw from
+    const sourceEl = captionSource === 'local'
+        ? document.getElementById('localVideo')
+        : document.getElementById('remoteVideo');
+    if (!sourceEl || !sourceEl.srcObject || sourceEl.readyState < 2) return;
+    if (sourceEl.videoWidth === 0) return;
+    captionCanvas.width  = sourceEl.videoWidth;
+    captionCanvas.height = sourceEl.videoHeight;
+    captionCtx.drawImage(sourceEl, 0, 0, captionCanvas.width, captionCanvas.height);
+    const frameData = captionCanvas.toDataURL('image/jpeg', 0.6).split(',')[1];
     try {
-        const response = await fetch("https://realtimeworkingmain.onrender.com/predict", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        const response = await fetch('https://realtimeworkingmain.onrender.com/predict', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: `frame=${encodeURIComponent(frameData)}`,
         });
-
-        const result = await response.json();
-        let newWord = result.prediction.trim();
-
-        // Ignore "No hands detected"
-        if (newWord && newWord !== "None" && newWord.toLowerCase() !== "no hands detected") {
-            // Add word to sentence only if it's different from the last one
+        if (!response.ok) return;
+        const result  = await response.json();
+        const newWord = (result.prediction || '').trim();
+        if (newWord && newWord !== 'None' && newWord.toLowerCase() !== 'no hands detected') {
             if (newWord !== lastWord) {
                 sentence.push(newWord);
-                lastWord = newWord;  // Update last word to prevent immediate repetition
+                lastWord = newWord;
                 speakText(newWord);
             }
         }
-
-         // Update the caption on the screen
-         predictionText.innerText = `Caption: ${sentence.join(" ")}`;
-
-        // Emit the updated caption to the server
-        // socket.emit('caption', { caption: sentence.join(" ") });  // Emit caption to other users4
-        // Emit the caption with the username (User A)
-// Emit to everyone including self (for consistency)
-        socket.emit("caption-update", {
-        from: username.value,
-        caption: sentence.join(" ")
-        });
-        // Send caption over data channel if available
-       if (dataChannel && dataChannel.readyState === "open") {
-           dataChannel.send(sentence.join(" "));
+        const captionStr = sentence.join(' ');
+        // Always update the local display (predictionText shows what WE are captioning)
+        document.getElementById('predictionText').innerText = `Caption: ${captionStr}`;
+        // Broadcast via socket so the remote peer's bar updates
+        if (typeof socket !== 'undefined' && username.value) {
+            socket.emit('caption-update', { from: username.value, caption: captionStr });
         }
-
-
-        // Display the full sentence
-        // predictionText.innerText = `Caption: ${sentence.join(" ")}`;
-        //gradual remove is not working so i stopped
-
-
-    } catch (error) {
-        console.error("Error sending frame:", error);
-    }
+        // Also over WebRTC data channel
+        if (typeof dataChannel !== 'undefined' && dataChannel && dataChannel.readyState === 'open') {
+            dataChannel.send(JSON.stringify({ caption: captionStr }));
+        }
+    } catch (_) { /* server cold-starting, ignore */ }
 }
-
-document.getElementById("clear-btn").addEventListener("click", function () {
-    document.getElementById("predictionText").innerText = "Caption: ..."; // Reset text
-    sentence = []; // Clear stored words
-    lastWord = ""; // Reset last word tracking
-});
-
-
-// Start continuous captioning
-function startCaptions() {
-    setInterval(sendFrame, 2000);  // Capture every 2 seconds
-}
-
-// Start captions when the page loads
-window.onload = startCaptions;
-
+// ── Socket listeners (wait for main.js to define socket) ─────────────────────
+const waitForSocket = setInterval(() => {
+    if (typeof socket === 'undefined') return;
+    clearInterval(waitForSocket);
+    // Remote user's caption → update remoteCaptionText
+    socket.on('caption-update', (data) => {
+        if (!data || !data.caption === undefined) return;
+        if (data.from && username.value && data.from === username.value) return;
+        document.getElementById('remoteCaptionText').innerText =
+            `${data.from || 'Remote'}: ${data.caption}`;
+    });
+    // Remote user switched their caption source — just informational, log it
+    socket.on('caption-source-change', (data) => {
+        if (!data) return;
+        // You could show a toast here if desired; for now silently noted
+        console.log(`${data.from} switched caption source to: ${data.source}`);
+    });
+}, 150);
+// ── Init ──────────────────────────────────────────────────────────────────────
+updateSourceUI();
+setInterval(sendFrame, 2000);
 </script>
-
+</body>
 </html>
 ```
 
@@ -5659,7 +5739,9 @@ window.onload = startCaptions;
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "17": "^0.0.0",
     "express": "^4.18.2",
+    "piyush": "^1.0.0",
     "piyushai": "^1.0.3",
     "socket.io": "^4.7.4"
   },
@@ -5887,315 +5969,271 @@ const remoteVideo = document.getElementById("remoteVideo");
 const endCallBtn = document.getElementById("end-call-btn");
 const muteBtn = document.getElementById("mute-audio-btn");
 const videoToggleBtn = document.getElementById("toggle-video-btn");
-const shareScreenBtn = document.getElementById("share-screen-btn");  
-const stopScreenShareBtn = document.getElementById("stop-screen-share-btn"); 
-let screenStream = null;  
-let localStream = null;  
-let peerConnection = null;  
-let isScreenSharing = false;  
-let caller = [];  
-let remoteScreenStream = null;  
-let isRemoteScreenSharing = false; 
+const shareScreenBtn = document.getElementById("share-screen-btn");
+const stopScreenShareBtn = document.getElementById("stop-screen-share-btn");
+let screenStream = null;
+let localStream = null;
+let isScreenSharing = false;
+let isMuted = false;
+let isVideoOff = false;
+let caller = [];
 let dataChannel = null;
-
+let screenShareTrack = null;
 const socket = io();
-
-const PeerConnection = (function() {
-    let peerConnection;
-
-    const createPeerConnection = () => {
-        const config = {
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        };
-        peerConnection = new RTCPeerConnection(config);
-
+async function startMyVideo(retrying = false) {
+    try {
         if (localStream) {
-            localStream.getTracks().forEach(track => {
-                peerConnection.addTrack(track, localStream);
-            });
+            localStream.getTracks().forEach(t => t.stop());
+            localStream = null;
         }
-    dataChannel = peerConnection.createDataChannel("captionChannel");
-    dataChannel.onopen = () => console.log("Data channel opened");
-    dataChannel.onmessage = (event) => {
-        remoteCaptionText.innerText = `Remote: ${event.data}`;
-    };
-        peerConnection.ontrack = function(event) {
-            remoteVideo.srcObject = event.streams[0];
+        localStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user" },  
+            audio: true
+        });
+        localVideo.srcObject = localStream;
+        localVideo.muted = true;          
+        if (isMuted)    localStream.getAudioTracks().forEach(t => { t.enabled = false; });
+        if (isVideoOff) localStream.getVideoTracks().forEach(t => { t.enabled = false; });
+        localStream.getTracks().forEach(track => {
+            track.onended = () => {
+                if (track.kind === "video" && !isScreenSharing) {
+                    showCameraError("Camera disconnected — reconnecting…");
+                    setTimeout(() => startMyVideo(), 2000);
+                }
+            };
+        });
+        hideCameraError();
+        if (typeof PeerConnection !== "undefined") {
+            const pc = PeerConnection.getInstance();
+            if (pc && pc.connectionState !== "closed" && pc.connectionState !== "new") {
+                localStream.getTracks().forEach(newTrack => {
+                    const sender = pc.getSenders().find(
+                        s => s.track && s.track.kind === newTrack.kind
+                    );
+                    if (sender) sender.replaceTrack(newTrack);
+                    else pc.addTrack(newTrack, localStream);
+                });
+            }
+        }
+    } catch (err) {
+        if (err.name === "NotReadableError" && !retrying) {
+            showCameraError("Camera busy — retrying in 3 s…");
+            setTimeout(() => startMyVideo(true), 3000);
+        } else if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+            showCameraError(
+                "Camera/mic permission denied. Please allow access in your browser settings, then tap Join again."
+            );
+        } else if (err.name === "NotFoundError") {
+            showCameraError("No camera found on this device.");
+        } else if (err.name === "OverconstrainedError" && !retrying) {
+            showCameraError("Camera constraints unsupported — trying fallback…");
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                localVideo.srcObject = localStream;
+                localVideo.muted = true;
+                hideCameraError();
+            } catch (e2) {
+                showCameraError("Could not access camera: " + e2.message);
+            }
+        } else {
+            showCameraError("Camera error: " + err.message);
+        }
+    }
+}
+function showCameraError(msg) {
+    let b = document.getElementById("cam-err-banner");
+    if (!b) {
+        b = document.createElement("div");
+        b.id = "cam-err-banner";
+        b.style.cssText =
+            "position:fixed;bottom:1rem;left:50%;transform:translateX(-50%);" +
+            "background:#7f1d1d;color:#fff;padding:.6rem 1.2rem;border-radius:8px;" +
+            "font-size:.85rem;z-index:9999;max-width:90vw;text-align:center;" +
+            "box-shadow:0 4px 12px rgba(0,0,0,.35);";
+        document.body.appendChild(b);
+    }
+    b.textContent = msg;
+    b.style.display = "block";
+}
+function hideCameraError() {
+    const b = document.getElementById("cam-err-banner");
+    if (b) b.style.display = "none";
+}
+const PeerConnection = (function () {
+    let pc;
+    const create = () => {
+        pc = new RTCPeerConnection({
+            iceServers: [
+                { urls: "stun:stun.l.google.com:19302" },
+                { urls: "stun:stun1.l.google.com:19302" }
+            ]
+        });
+        if (localStream) {
+            localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+        }
+        dataChannel = pc.createDataChannel("captionChannel");
+        setupDataChannelHandlers(dataChannel);
+        pc.ondatachannel = (e) => {
+            dataChannel = e.channel;
+            setupDataChannelHandlers(dataChannel);
         };
-
-        peerConnection.onicecandidate = function(event) {
-            if (event.candidate) {
-                socket.emit("icecandidate", event.candidate);
+        pc.ontrack = (e) => { remoteVideo.srcObject = e.streams[0]; };
+        pc.onicecandidate = (e) => {
+            if (e.candidate) socket.emit("icecandidate", e.candidate);
+        };
+        pc.onconnectionstatechange = () => {
+            if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+                endCall();
             }
         };
-
-        return peerConnection;
+        return pc;
     };
-
     return {
         getInstance: () => {
-            if (!peerConnection || peerConnection.connectionState === "closed") {
-                peerConnection = createPeerConnection();
-            }
-            return peerConnection;
+            if (!pc || pc.connectionState === "closed") pc = create();
+            return pc;
         },
-        reset: () => {
-            peerConnection = null;
-        }
+        reset: () => { pc = null; }
     };
 })();
-
 function setupDataChannelHandlers(channel) {
-    channel.onopen = () => {
-    };
-
-    channel.onmessage = (event) => {
-        const { caption } = JSON.parse(event.data);
-        const captionsDiv = document.getElementById("captions");
-        if (captionsDiv) {
-            const p = document.createElement("p");
-
-
-            p.innerHTML = `<strong>Peer:</strong> ${caption}`;
-            captionsDiv.appendChild(p);
+    channel.onmessage = (e) => {
+        try {
+            const { caption } = JSON.parse(e.data);
+            const el = document.getElementById("remoteCaptionText");
+            if (el && caption !== undefined) el.innerText = `Remote: ${caption}`;
+        } catch (_) {
+            const el = document.getElementById("remoteCaptionText");
+            if (el) el.innerText = `Remote: ${e.data}`;
         }
     };
-
-    channel.onerror = (err) => {
-    };
 }
-
-function sendCaption(captionText) {
-    if (dataChannel && dataChannel.readyState === "open") {
-        dataChannel.send(JSON.stringify({ caption: captionText }));
-    }
-}
-
-
-createUserBtn.addEventListener("click", () => {
-    if (username.value !== "") {
-        const usernameContainer = document.querySelector(".username-input");
-        socket.emit("join-user", username.value);
-        usernameContainer.style.display = 'none';
-    }
+socket.on("caption-update", (data) => {
+    if (!data) return;
+    if (data.from && username.value && data.from === username.value) return;
+    const el = document.getElementById("remoteCaptionText");
+    if (el) el.innerText = `${data.from || "Remote"}: ${data.caption || ""}`;
 });
-
+createUserBtn.addEventListener("click", async () => {
+    const name = username.value.trim();
+    if (!name) return;
+    createUserBtn.disabled = true;
+    createUserBtn.textContent = "Joining…";
+    await startMyVideo();
+    socket.emit("join-user", name);
+    const sec = document.querySelector(".username-section");
+    if (sec) sec.style.display = "none";
+});
 endCallBtn.addEventListener("click", () => {
     socket.emit("call-ended", caller);
     endCall();
 });
-
 socket.on("joined", (allusers) => {
     allusersHtml.innerHTML = "";
     for (const user in allusers) {
         const li = document.createElement("li");
-        li.textContent = `${user} ${user === username.value ? "(You)" : ""}`;
-
+        li.textContent = `${user}${user === username.value ? " (You)" : ""}`;
         if (user !== username.value) {
             const button = document.createElement("button");
             button.classList.add("call-btn");
+            button.title = `Call ${user}`;
             button.addEventListener("click", () => startCall(user));
             const img = document.createElement("img");
             img.setAttribute("src", "/images/phone.png");
-            img.setAttribute("width", 20);
+            img.setAttribute("alt", "Call");
             button.appendChild(img);
             li.appendChild(button);
         }
-
         allusersHtml.appendChild(li);
     }
 });
-
-
 socket.on("offer", async ({ from, to, offer }) => {
     const pc = PeerConnection.getInstance();
-
-    pc.ondatachannel = (event) => {
-        dataChannel = event.channel;
-        setupDataChannelHandlers(dataChannel); 
-    };
-
     await pc.setRemoteDescription(offer);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     socket.emit("answer", { from, to, answer: pc.localDescription });
-
     caller = [from, to];
-    endCallBtn.style.display = "block";
+    endCallBtn.style.display = "flex";
 });
-
-
 socket.on("answer", async ({ from, to, answer }) => {
     const pc = PeerConnection.getInstance();
     await pc.setRemoteDescription(answer);
-
     caller = [from, to];
-    endCallBtn.style.display = "block"; 
+    endCallBtn.style.display = "flex";
 });
-
-
-
-
 socket.on("icecandidate", async (candidate) => {
     const pc = PeerConnection.getInstance();
-    await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); }
+    catch (e) { console.warn("ICE error:", e); }
 });
-
-socket.on("call-ended", () => {
-    endCall();
-});
-
-
-
-
-socket.on('caption', (data) => {
-    predictionText.innerText = `Caption: ${data.caption}`;
-});
-
-
+socket.on("call-ended", () => endCall());
 const startCall = async (user) => {
     const pc = PeerConnection.getInstance();
-
-    dataChannel = pc.createDataChannel("captions");
-
-    setupDataChannelHandlers(dataChannel); 
-
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-
     socket.emit("offer", { from: username.value, to: user, offer: pc.localDescription });
-
-    endCallBtn.style.display = "block";
+    endCallBtn.style.display = "flex";
 };
-
-
-
 const endCall = () => {
     const pc = PeerConnection.getInstance();
-    if (pc) {
-        pc.close();
-    }
-
+    if (pc) pc.close();
     caller = [];
-    endCallBtn.style.display = "none"; 
+    endCallBtn.style.display = "none";
+    remoteVideo.srcObject = null;
     PeerConnection.reset();
 };
-
-async function startMyVideo() {
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true, echoCancellation: true, 
-            noiseSuppression: true,
-            autoGainControl: true });
-        localVideo.srcObject = localStream;
-    } catch (error) {
-    }
-}
-
 muteBtn.addEventListener("click", () => {
-    if (localStream) {
-        const audioTrack = localStream.getAudioTracks()[0];
-        audioTrack.enabled = !audioTrack.enabled;
-        muteBtn.textContent = audioTrack.enabled ? "Mute" : "Unmute";
-    }
+    if (!localStream) return;
+    isMuted = !isMuted;
+    localStream.getAudioTracks().forEach(t => { t.enabled = !isMuted; });
+    muteBtn.textContent = isMuted ? "Unmute" : "Mute";
 });
-
 videoToggleBtn.addEventListener("click", () => {
-    if (localStream) {
-        const videoTrack = localStream.getVideoTracks()[0];
-        videoTrack.enabled = !videoTrack.enabled;
-        videoToggleBtn.textContent = videoTrack.enabled ? "Video Off" : "Video On";
-    }
+    if (!localStream) return;
+    isVideoOff = !isVideoOff;
+    localStream.getVideoTracks().forEach(t => { t.enabled = !isVideoOff; });
+    videoToggleBtn.textContent = isVideoOff ? "Video On" : "Video Off";
 });
-
-startMyVideo();
-
+shareScreenBtn.addEventListener("click", () => {
+    if (isScreenSharing) stopScreenSharing();
+    else startScreenSharing();
+});
+stopScreenShareBtn.addEventListener("click", stopScreenSharing);
 const startScreenSharing = async () => {
     try {
         screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-
+        screenShareTrack = screenStream.getVideoTracks()[0];
         localVideo.srcObject = screenStream;
-
         const pc = PeerConnection.getInstance();
-
-        localStream.getTracks().forEach(track => {
-            if (track.kind === "video") {
-                const sender = pc.getSenders().find(s => s.track.kind === "video");
-                if (sender) {
-                    sender.replaceTrack(screenStream.getVideoTracks()[0]);
-                }
-            }
-        });
-
-        screenShareTrack = screenStream.getVideoTracks()[0];  
-        screenStream.getTracks().forEach(track => {
-            pc.addTrack(track, screenStream);
-        });
-
-        screenStream.getTracks().forEach(track => {
-            track.onended = () => {
-                stopScreenSharing();  
-            };
-        });
-
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+        if (sender) sender.replaceTrack(screenShareTrack);
+        screenShareTrack.onended = stopScreenSharing;
         isScreenSharing = true;
-    } catch (error) {
+        shareScreenBtn.textContent = "Stop Share";
+    } catch (e) {
     }
 };
-
 const stopScreenSharing = () => {
-    if (screenStream) {
-        screenStream.getTracks().forEach(track => track.stop());
-    }
-
-    localVideo.srcObject = localStream;
-
-    const pc = PeerConnection.getInstance();
-
-    const senders = pc.getSenders();
-    senders.forEach(sender => {
-        if (sender.track === screenShareTrack) {
-            sender.replaceTrack(localStream.getVideoTracks()[0]);  
-        }
-    });
-
-    localStream.getTracks().forEach(track => {
-        if (track.kind === "video" && track !== screenShareTrack) {
-            pc.addTrack(track, localStream);
-        }
-    });
-
-    isScreenSharing = false;
-};
-
-shareScreenBtn.addEventListener("click", () => {
-    if (isScreenSharing) {
-        stopScreenSharing();  
-    } else {
-        startScreenSharing();  
-    }
-});
-
-stopScreenShareBtn.addEventListener("click", () => {
-    stopScreenSharing();  
-});
-
-socket.on("remote-screen-share", (stream) => {
-    remoteScreenStream = stream;
-    remoteVideo.srcObject = remoteScreenStream;  
-});
-
-socket.on("stop-remote-screen-share", () => {
-    remoteVideo.srcObject = remoteStream;  
-});
-
-
-async function startMyVideo() {
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; }
+    if (localStream) {
         localVideo.srcObject = localStream;
-    } catch (error) {
+        const pc = PeerConnection.getInstance();
+        if (pc && pc.connectionState !== "closed") {
+            const sender = pc.getSenders().find(s => s.track === screenShareTrack);
+            if (sender && localStream.getVideoTracks()[0]) {
+                sender.replaceTrack(localStream.getVideoTracks()[0]);
+            }
+        }
     }
-}
+    screenShareTrack = null;
+    isScreenSharing = false;
+    shareScreenBtn.textContent = "Share Screen";
+};
+window.addEventListener("beforeunload", () => {
+    if (username.value) socket.emit("leave-user", username.value);
+    if (localStream) localStream.getTracks().forEach(t => t.stop());
+});
 ```
 
 ### `public/js/screenmain.js`
@@ -6523,68 +6561,60 @@ import cv2
 import mediapipe as mp
 import pickle
 import os
-
 app = Flask(__name__)
 CORS(app)
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 model_path = os.path.join(BASE_DIR, '..', 'models', 'model.pkl')
-
 try:
     with open(model_path, 'rb') as file:
         model = pickle.load(file)
 except Exception as e:
     model = None
 mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
-mp_drawing_styles = mp.solutions.drawing_styles
-
+hands_detector = mp_hands.Hands(
+    static_image_mode=True,
+    max_num_hands=2,
+    min_detection_confidence=0.5
+)
 @app.route('/predict', methods=['POST'])
 def predict():
     if model is None:
-        return jsonify({'error': 'Model not loaded'}), 500  
-
+        return jsonify({'error': 'Model not loaded'}), 500
     try:
         if 'frame' not in request.form:
             return jsonify({'error': 'No frame in request'}), 400
-
         image_data = request.form['frame']
         if not image_data:
             return jsonify({'error': 'Received empty image data'}), 400
-
+        if ',' in image_data:
+            image_data = image_data.split(',', 1)[1]
         image_bytes = base64.b64decode(image_data)
         nparr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
         if img is None:
             return jsonify({'error': 'Failed to decode image'}), 400
-
+        max_dim = 640
+        h, w = img.shape[:2]
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            img = cv2.resize(img, (int(w * scale), int(h * scale)))
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-        with mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.5) as hands:
-            results = hands.process(img_rgb)
-
-            if not results.multi_hand_landmarks:
-                return jsonify({'prediction': ''})   
-
-            data = []
-            for hand_landmarks in results.multi_hand_landmarks:
-                for point in mp_hands.HandLandmark:
-                    landmark = hand_landmarks.landmark[point]
-                    data.extend([landmark.x, landmark.y, landmark.z])  
-
-            if len(data) != model.n_features_in_:  
-                return jsonify({'error': 'Incorrect input size for model'})
-
-            prediction = model.predict([data])[0]
-
-            return jsonify({'prediction': prediction})
-
+        results = hands_detector.process(img_rgb)
+        if not results.multi_hand_landmarks:
+            return jsonify({'prediction': ''})
+        data = []
+        for hand_landmarks in results.multi_hand_landmarks:
+            for point in mp_hands.HandLandmark:
+                landmark = hand_landmarks.landmark[point]
+                data.extend([landmark.x, landmark.y, landmark.z])
+        if len(data) != model.n_features_in_:
+            return jsonify({'error': 'Incorrect input size for model'})
+        prediction = model.predict([data])[0]
+        return jsonify({'prediction': prediction})
     except Exception as e:
         return jsonify({'error': str(e)}), 400
-
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=False, threaded=False)
 ```
 
 ### `server.js`
@@ -6595,70 +6625,75 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-
-
-
 const app = express();
 const server = createServer(app);
 const io = new Server(server);
 const allusers = {};
-
+const socketToUser = {};
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-
 app.use(express.static("public"));
-
-app.get("/", (req, res) => {
-    res.sendFile(join(__dirname + "/app/home.html"));
-});
-app.get("/page1", (req, res) => {
-    res.sendFile(join(__dirname + "/app/index.html"));
-});
-app.get("/about", (req, res) => {
-    res.sendFile(join(__dirname + "/app/about.html"));
-});
-app.get("/page2", (req, res) => {
-    res.sendFile(join(__dirname + "/app/videoUpload.html"));
-});
-
-app.get("/page3", (req, res) => {
-    res.sendFile(join(__dirname + "/app/.html"));
-});
-
+app.get("/",      (req, res) => res.sendFile(join(__dirname, "app/home.html")));
+app.get("/page1", (req, res) => res.sendFile(join(__dirname, "app/index.html")));
+app.get("/about", (req, res) => res.sendFile(join(__dirname, "app/about.html")));
+app.get("/page2", (req, res) => res.sendFile(join(__dirname, "app/videoUpload.html")));
+app.get("/page3", (req, res) => res.sendFile(join(__dirname, "app/page3.html")));
 io.on("connection", (socket) => {
-    socket.on("join-user", username => {
+    socket.on("join-user", (username) => {
+        if (allusers[username]) {
+            const oldId = allusers[username].id;
+            delete socketToUser[oldId];
+        }
         allusers[username] = { username, id: socket.id };
+        socketToUser[socket.id] = username;
         io.emit("joined", allusers);
     });
-
-    socket.on("offer", ({from, to, offer}) => {
-        io.to(allusers[to].id).emit("offer", {from, to, offer});
+    socket.on("leave-user", (username) => {
+        removeUser(username, socket.id);
+        io.emit("joined", allusers);
     });
-
-    socket.on("answer", ({from, to, answer}) => {
-       io.to(allusers[from].id).emit("answer", {from, to, answer});
+    socket.on("offer", ({ from, to, offer }) => {
+        if (allusers[to]) {
+            io.to(allusers[to].id).emit("offer", { from, to, offer });
+        }
     });
-
-    socket.on("end-call", ({from, to}) => {
-        io.to(allusers[to].id).emit("end-call", {from, to});
+    socket.on("answer", ({ from, to, answer }) => {
+        if (allusers[from]) {
+            io.to(allusers[from].id).emit("answer", { from, to, answer });
+        }
     });
-
-    socket.on("call-ended", caller => {
+    socket.on("end-call", ({ from, to }) => {
+        if (allusers[to]) {
+            io.to(allusers[to].id).emit("end-call", { from, to });
+        }
+    });
+    socket.on("call-ended", (caller) => {
         const [from, to] = caller;
-        io.to(allusers[from].id).emit("call-ended", caller);
-        io.to(allusers[to].id).emit("call-ended", caller);
-    })
-
-
-    socket.on("icecandidate", candidate => {
+        if (allusers[from]) io.to(allusers[from].id).emit("call-ended", caller);
+        if (allusers[to])   io.to(allusers[to].id).emit("call-ended", caller);
+    });
+    socket.on("icecandidate", (candidate) => {
         socket.broadcast.emit("icecandidate", candidate);
-    }); 
+    });
     socket.on("caption-update", (data) => {
         socket.broadcast.emit("caption-update", data);
-      });
-
-})
-
+    });
+    socket.on("caption-source-change", (data) => {
+        socket.broadcast.emit("caption-source-change", data);
+    });
+    socket.on("disconnect", () => {
+        const username = socketToUser[socket.id];
+        if (username) {
+            removeUser(username, socket.id);
+            io.emit("joined", allusers);   
+        }
+    });
+});
+function removeUser(username, socketId) {
+    if (allusers[username] && allusers[username].id === socketId) {
+        delete allusers[username];
+    }
+    delete socketToUser[socketId];
+}
 server.listen(9000, () => {
 });
 ```
