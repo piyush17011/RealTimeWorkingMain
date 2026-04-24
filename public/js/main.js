@@ -12,108 +12,232 @@ const stopScreenShareBtn = document.getElementById("stop-screen-share-btn");
 let screenStream = null;
 let localStream = null;
 let isScreenSharing = false;
+let isMuted = false;
+let isVideoOff = false;
 let caller = [];
 let dataChannel = null;
 let screenShareTrack = null;
 
 const socket = io();
 
-// ---- PeerConnection singleton ----
-const PeerConnection = (function () {
-    let peerConnection;
-
-    const createPeerConnection = () => {
-        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-        peerConnection = new RTCPeerConnection(config);
-
+// ─────────────────────────────────────────────
+// CAMERA — called ONLY after a user gesture
+// ─────────────────────────────────────────────
+async function startMyVideo(retrying = false) {
+    try {
+        // Stop existing tracks before requesting new ones
         if (localStream) {
-            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            localStream.getTracks().forEach(t => t.stop());
+            localStream = null;
         }
 
-        // Data channel for captions (caller side creates it)
-        dataChannel = peerConnection.createDataChannel("captionChannel");
+        localStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: "user",       // front camera on mobile
+                width:  { ideal: 1280 },
+                height: { ideal: 720  }
+            },
+            audio: true
+        });
+
+        localVideo.srcObject = localStream;
+        localVideo.muted = true;          // prevent echo on self-view
+
+        // Re-apply any active mute/video-off state if recovering
+        if (isMuted)    localStream.getAudioTracks().forEach(t => { t.enabled = false; });
+        if (isVideoOff) localStream.getVideoTracks().forEach(t => { t.enabled = false; });
+
+        // Auto-recover if the OS revokes the camera (e.g. another app grabs it)
+        localStream.getTracks().forEach(track => {
+            track.onended = () => {
+                if (track.kind === "video" && !isScreenSharing) {
+                    showCameraError("Camera disconnected — reconnecting…");
+                    setTimeout(() => startMyVideo(), 2000);
+                }
+            };
+        });
+
+        hideCameraError();
+
+        // If already in a call, replace the track in the peer connection
+        if (typeof PeerConnection !== "undefined") {
+            const pc = PeerConnection.getInstance();
+            if (pc && pc.connectionState !== "closed" && pc.connectionState !== "new") {
+                localStream.getTracks().forEach(newTrack => {
+                    const sender = pc.getSenders().find(
+                        s => s.track && s.track.kind === newTrack.kind
+                    );
+                    if (sender) sender.replaceTrack(newTrack);
+                    else pc.addTrack(newTrack, localStream);
+                });
+            }
+        }
+
+    } catch (err) {
+        console.error("getUserMedia:", err.name, err.message);
+
+        if (err.name === "NotReadableError" && !retrying) {
+            showCameraError("Camera busy — retrying in 3 s…");
+            setTimeout(() => startMyVideo(true), 3000);
+
+        } else if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+            showCameraError(
+                "Camera/mic permission denied. Please allow access in your browser settings, then tap Join again."
+            );
+
+        } else if (err.name === "NotFoundError") {
+            showCameraError("No camera found on this device.");
+
+        } else if (err.name === "OverconstrainedError" && !retrying) {
+            // Retry with no constraints
+            showCameraError("Camera constraints unsupported — trying fallback…");
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                localVideo.srcObject = localStream;
+                localVideo.muted = true;
+                hideCameraError();
+            } catch (e2) {
+                showCameraError("Could not access camera: " + e2.message);
+            }
+
+        } else {
+            showCameraError("Camera error: " + err.message);
+        }
+    }
+}
+
+function showCameraError(msg) {
+    let b = document.getElementById("cam-err-banner");
+    if (!b) {
+        b = document.createElement("div");
+        b.id = "cam-err-banner";
+        b.style.cssText =
+            "position:fixed;bottom:1rem;left:50%;transform:translateX(-50%);" +
+            "background:#7f1d1d;color:#fff;padding:.6rem 1.2rem;border-radius:8px;" +
+            "font-size:.85rem;z-index:9999;max-width:90vw;text-align:center;" +
+            "box-shadow:0 4px 12px rgba(0,0,0,.35);";
+        document.body.appendChild(b);
+    }
+    b.textContent = msg;
+    b.style.display = "block";
+}
+function hideCameraError() {
+    const b = document.getElementById("cam-err-banner");
+    if (b) b.style.display = "none";
+}
+
+// ─────────────────────────────────────────────
+// PeerConnection singleton
+// ─────────────────────────────────────────────
+const PeerConnection = (function () {
+    let pc;
+
+    const create = () => {
+        pc = new RTCPeerConnection({
+            iceServers: [
+                { urls: "stun:stun.l.google.com:19302" },
+                { urls: "stun:stun1.l.google.com:19302" }
+            ]
+        });
+
+        if (localStream) {
+            localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+        }
+
+        // Caller creates channel; callee receives it
+        dataChannel = pc.createDataChannel("captionChannel");
         setupDataChannelHandlers(dataChannel);
 
-        // Callee side: handle incoming data channel
-        peerConnection.ondatachannel = (event) => {
-            dataChannel = event.channel;
+        pc.ondatachannel = (e) => {
+            dataChannel = e.channel;
             setupDataChannelHandlers(dataChannel);
         };
 
-        peerConnection.ontrack = function (event) {
-            remoteVideo.srcObject = event.streams[0];
+        pc.ontrack = (e) => { remoteVideo.srcObject = e.streams[0]; };
+
+        pc.onicecandidate = (e) => {
+            if (e.candidate) socket.emit("icecandidate", e.candidate);
         };
 
-        peerConnection.onicecandidate = function (event) {
-            if (event.candidate) {
-                socket.emit("icecandidate", event.candidate);
+        pc.onconnectionstatechange = () => {
+            if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+                endCall();
             }
         };
 
-        return peerConnection;
+        return pc;
     };
 
     return {
         getInstance: () => {
-            if (!peerConnection || peerConnection.connectionState === "closed") {
-                peerConnection = createPeerConnection();
-            }
-            return peerConnection;
+            if (!pc || pc.connectionState === "closed") pc = create();
+            return pc;
         },
-        reset: () => { peerConnection = null; }
+        reset: () => { pc = null; }
     };
 })();
 
-// ---- Data channel handlers ----
+// ─────────────────────────────────────────────
+// Data channel — captions over WebRTC
+// ─────────────────────────────────────────────
 function setupDataChannelHandlers(channel) {
-    channel.onmessage = (event) => {
+    channel.onmessage = (e) => {
         try {
-            const { caption } = JSON.parse(event.data);
+            const { caption } = JSON.parse(e.data);
             const el = document.getElementById("remoteCaptionText");
-            if (el && caption !== undefined) {
-                el.innerText = `Remote: ${caption}`;
-            }
-        } catch (e) {
-            // plain text fallback
+            if (el && caption !== undefined) el.innerText = `Remote: ${caption}`;
+        } catch (_) {
             const el = document.getElementById("remoteCaptionText");
-            if (el) el.innerText = `Remote: ${event.data}`;
+            if (el) el.innerText = `Remote: ${e.data}`;
         }
     };
 }
 
-// ---- Socket: receive caption from remote user ----
+// ─────────────────────────────────────────────
+// Socket — caption broadcast (fallback via server relay)
+// ─────────────────────────────────────────────
 socket.on("caption-update", (data) => {
     if (!data) return;
-    // Only show captions from OTHER users (not our own echo)
     if (data.from && username.value && data.from === username.value) return;
     const el = document.getElementById("remoteCaptionText");
-    if (el) {
-        el.innerText = `${data.from || 'Remote'}: ${data.caption || ''}`;
-    }
+    if (el) el.innerText = `${data.from || "Remote"}: ${data.caption || ""}`;
 });
 
-// ---- Create user ----
-createUserBtn.addEventListener("click", () => {
-    if (username.value.trim() !== "") {
-        socket.emit("join-user", username.value.trim());
-        // Hide the input area after joining
-        const usernameSection = document.querySelector(".username-section");
-        if (usernameSection) usernameSection.style.display = "none";
-    }
+// ─────────────────────────────────────────────
+// JOIN — camera is requested HERE (after user gesture)
+// ─────────────────────────────────────────────
+createUserBtn.addEventListener("click", async () => {
+    const name = username.value.trim();
+    if (!name) return;
+
+    createUserBtn.disabled = true;
+    createUserBtn.textContent = "Joining…";
+
+    // getUserMedia MUST be called inside a user-gesture handler for mobile
+    await startMyVideo();
+
+    socket.emit("join-user", name);
+
+    const sec = document.querySelector(".username-section");
+    if (sec) sec.style.display = "none";
 });
 
-// ---- End call ----
+// ─────────────────────────────────────────────
+// End call
+// ─────────────────────────────────────────────
 endCallBtn.addEventListener("click", () => {
     socket.emit("call-ended", caller);
     endCall();
 });
 
-// ---- Render contacts list ----
+// ─────────────────────────────────────────────
+// Contacts list
+// ─────────────────────────────────────────────
 socket.on("joined", (allusers) => {
     allusersHtml.innerHTML = "";
     for (const user in allusers) {
         const li = document.createElement("li");
-        li.textContent = `${user} ${user === username.value ? "(You)" : ""}`;
+        li.textContent = `${user}${user === username.value ? " (You)" : ""}`;
 
         if (user !== username.value) {
             const button = document.createElement("button");
@@ -131,7 +255,9 @@ socket.on("joined", (allusers) => {
     }
 });
 
-// ---- WebRTC signalling ----
+// ─────────────────────────────────────────────
+// WebRTC signalling
+// ─────────────────────────────────────────────
 socket.on("offer", async ({ from, to, offer }) => {
     const pc = PeerConnection.getInstance();
     await pc.setRemoteDescription(offer);
@@ -151,12 +277,12 @@ socket.on("answer", async ({ from, to, answer }) => {
 
 socket.on("icecandidate", async (candidate) => {
     const pc = PeerConnection.getInstance();
-    await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); }
+    catch (e) { console.warn("ICE error:", e); }
 });
 
 socket.on("call-ended", () => endCall());
 
-// ---- Start / end call ----
 const startCall = async (user) => {
     const pc = PeerConnection.getInstance();
     const offer = await pc.createOffer();
@@ -170,73 +296,76 @@ const endCall = () => {
     if (pc) pc.close();
     caller = [];
     endCallBtn.style.display = "none";
+    remoteVideo.srcObject = null;
     PeerConnection.reset();
 };
 
-// ---- Media controls ----
+// ─────────────────────────────────────────────
+// Mute / Video Off
+// ─────────────────────────────────────────────
 muteBtn.addEventListener("click", () => {
-    if (localStream) {
-        const audioTrack = localStream.getAudioTracks()[0];
-        audioTrack.enabled = !audioTrack.enabled;
-        muteBtn.textContent = audioTrack.enabled ? "Mute" : "Unmute";
-    }
+    if (!localStream) return;
+    isMuted = !isMuted;
+    localStream.getAudioTracks().forEach(t => { t.enabled = !isMuted; });
+    muteBtn.textContent = isMuted ? "Unmute" : "Mute";
 });
 
 videoToggleBtn.addEventListener("click", () => {
-    if (localStream) {
-        const videoTrack = localStream.getVideoTracks()[0];
-        videoTrack.enabled = !videoTrack.enabled;
-        videoToggleBtn.textContent = videoTrack.enabled ? "Video Off" : "Video On";
-    }
+    if (!localStream) return;
+    isVideoOff = !isVideoOff;
+    localStream.getVideoTracks().forEach(t => { t.enabled = !isVideoOff; });
+    // Label = what the button does NEXT click
+    videoToggleBtn.textContent = isVideoOff ? "Video On" : "Video Off";
 });
 
-// ---- Screen sharing ----
+// ─────────────────────────────────────────────
+// Screen sharing
+// ─────────────────────────────────────────────
 shareScreenBtn.addEventListener("click", () => {
     if (isScreenSharing) stopScreenSharing();
     else startScreenSharing();
 });
-
 stopScreenShareBtn.addEventListener("click", stopScreenSharing);
 
 const startScreenSharing = async () => {
     try {
         screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        screenShareTrack = screenStream.getVideoTracks()[0];
         localVideo.srcObject = screenStream;
+
         const pc = PeerConnection.getInstance();
         const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
-        screenShareTrack = screenStream.getVideoTracks()[0];
         if (sender) sender.replaceTrack(screenShareTrack);
+
         screenShareTrack.onended = stopScreenSharing;
         isScreenSharing = true;
-    } catch (error) {
-        console.error("Screen share error:", error);
+        shareScreenBtn.textContent = "Stop Share";
+    } catch (e) {
+        console.error("Screen share:", e);
     }
 };
 
 const stopScreenSharing = () => {
-    if (screenStream) screenStream.getTracks().forEach(t => t.stop());
-    localVideo.srcObject = localStream;
-    const pc = PeerConnection.getInstance();
-    const sender = pc.getSenders().find(s => s.track === screenShareTrack);
-    if (sender && localStream) sender.replaceTrack(localStream.getVideoTracks()[0]);
+    if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; }
+    if (localStream) {
+        localVideo.srcObject = localStream;
+        const pc = PeerConnection.getInstance();
+        if (pc && pc.connectionState !== "closed") {
+            const sender = pc.getSenders().find(s => s.track === screenShareTrack);
+            if (sender && localStream.getVideoTracks()[0]) {
+                sender.replaceTrack(localStream.getVideoTracks()[0]);
+            }
+        }
+    }
+    screenShareTrack = null;
     isScreenSharing = false;
+    shareScreenBtn.textContent = "Share Screen";
 };
 
-// ---- Start local video ----
-async function startMyVideo() {
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true
-            }
-        });
-        localVideo.srcObject = localStream;
-    } catch (error) {
-        console.error("Camera/mic error:", error);
-    }
-}
-
-startMyVideo();
+// ─────────────────────────────────────────────
+// Cleanup on page unload — remove user from server list
+// ─────────────────────────────────────────────
+window.addEventListener("beforeunload", () => {
+    if (username.value) socket.emit("leave-user", username.value);
+    if (localStream) localStream.getTracks().forEach(t => t.stop());
+});
