@@ -1,5 +1,5 @@
 # Project context: RealTimeWorkingMain
-Generated: 2026-04-24 · 11 files · stripped: comments, blank_lines, console_logs
+Generated: 2026-05-19 · 12 files · stripped: comments, blank_lines, console_logs
 
 ---
 
@@ -23,7 +23,8 @@ RealTimeWorkingMain/
 │       ├── screenmain.js
 │       └── socket.io.js
 ├── server/
-│   └── app.py
+│   ├── app.py
+│   └── gunicorn.conf.py
 └── server.js
 ```
 
@@ -6195,11 +6196,6 @@ videoToggleBtn.addEventListener("click", () => {
     localStream.getVideoTracks().forEach(t => { t.enabled = !isVideoOff; });
     videoToggleBtn.textContent = isVideoOff ? "Video On" : "Video Off";
 });
-shareScreenBtn.addEventListener("click", () => {
-    if (isScreenSharing) stopScreenSharing();
-    else startScreenSharing();
-});
-stopScreenShareBtn.addEventListener("click", stopScreenSharing);
 const startScreenSharing = async () => {
     try {
         screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
@@ -6211,8 +6207,7 @@ const startScreenSharing = async () => {
         screenShareTrack.onended = stopScreenSharing;
         isScreenSharing = true;
         shareScreenBtn.textContent = "Stop Share";
-    } catch (e) {
-    }
+    } catch (e) {}
 };
 const stopScreenSharing = () => {
     if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; }
@@ -6230,6 +6225,11 @@ const stopScreenSharing = () => {
     isScreenSharing = false;
     shareScreenBtn.textContent = "Share Screen";
 };
+shareScreenBtn.addEventListener("click", () => {
+    if (isScreenSharing) stopScreenSharing();
+    else startScreenSharing();
+});
+stopScreenShareBtn.addEventListener("click", stopScreenSharing);
 window.addEventListener("beforeunload", () => {
     if (username.value) socket.emit("leave-user", username.value);
     if (localStream) localStream.getTracks().forEach(t => t.stop());
@@ -6239,84 +6239,156 @@ window.addEventListener("beforeunload", () => {
 ### `public/js/screenmain.js`
 
 ```js
-const createUserBtn = document.getElementById("create-user");
-const username = document.getElementById("username");
-const allusersHtml = document.getElementById("allusers");
-const localVideo = document.getElementById("localVideo");
-const remoteVideo = document.getElementById("remoteVideo");
-const endCallBtn = document.getElementById("end-call-btn");
-const muteBtn = document.getElementById("mute-audio-btn");
-const videoToggleBtn = document.getElementById("toggle-video-btn");
-const shareScreenBtn = document.getElementById("share-screen-btn");  
-const stopScreenShareBtn = document.getElementById("stop-screen-share-btn"); 
-let screenStream = null;  
-let localStream = null;  
-let peerConnection = null;  
-let isScreenSharing = false;  
-let caller = [];  
-
+const PYTHON_SERVER_URL = "https://realtimeworkingmain.onrender.com";
+const createUserBtn   = document.getElementById("create-user");
+const username        = document.getElementById("username");
+const allusersHtml    = document.getElementById("allusers");
+const localVideo      = document.getElementById("localVideo");
+const remoteVideo     = document.getElementById("remoteVideo");
+const endCallBtn      = document.getElementById("end-call-btn");
+const muteBtn         = document.getElementById("mute-audio-btn");
+const videoToggleBtn  = document.getElementById("toggle-video-btn");
+const shareScreenBtn  = document.getElementById("share-screen-btn");
+const stopScreenShareBtn = document.getElementById("stop-screen-share-btn");
+let screenStream  = null;
+let localStream   = null;
+let isScreenSharing = false;
+let caller = [];
+let captionInterval = null;   
 const socket = io();
-
-const PeerConnection = (function() {
-    let peerConnection;
-
-    const createPeerConnection = () => {
-        const config = {
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        };
-        peerConnection = new RTCPeerConnection(config);
-
-        if (localStream) {
-            localStream.getTracks().forEach(track => {
-                peerConnection.addTrack(track, localStream);
-            });
+function getOrCreateCaptionOverlay() {
+    let overlay = document.getElementById("local-caption-overlay");
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "local-caption-overlay";
+        overlay.style.cssText = [
+            "position:absolute", "bottom:10px", "left:50%",
+            "transform:translateX(-50%)",
+            "background:rgba(0,0,0,0.7)", "color:#fff",
+            "font-size:20px", "font-weight:bold",
+            "padding:6px 14px", "border-radius:8px",
+            "pointer-events:none", "z-index:10",
+            "white-space:nowrap", "max-width:90%",
+            "text-align:center"
+        ].join(";");
+        const container = localVideo.parentElement || document.body;
+        container.style.position = "relative";
+        container.appendChild(overlay);
+    }
+    return overlay;
+}
+function displayGesture(gesture) {
+    const overlay = getOrCreateCaptionOverlay();
+    overlay.textContent = gesture || "";
+}
+const offscreenCanvas = document.createElement("canvas");
+const offscreenCtx = offscreenCanvas.getContext("2d");
+async function processVideoFrame() {
+    if (!localVideo.srcObject) return;
+    if (localVideo.videoWidth === 0 || localVideo.videoHeight === 0) return;
+    if (localVideo.readyState < localVideo.HAVE_CURRENT_DATA) return;
+    offscreenCanvas.width  = localVideo.videoWidth;
+    offscreenCanvas.height = localVideo.videoHeight;
+    offscreenCtx.drawImage(localVideo, 0, 0);
+    const dataUrl = offscreenCanvas.toDataURL("image/jpeg", 0.7);
+    await detectHandGestures(dataUrl);
+}
+async function detectHandGestures(dataUrl) {
+    const formData = new FormData();
+    formData.append("frame", dataUrl);
+    try {
+        const response = await fetch(`${PYTHON_SERVER_URL}/predict`, {
+            method: "POST",
+            body: formData
+        });
+        if (!response.ok) {
+            const errText = await response.text();
+            displayGesture("⚠ server error");
+            return;
         }
-
-        peerConnection.ontrack = function(event) {
-            remoteVideo.srcObject = event.streams[0];
+        const data = await response.json();
+        if (data.error) {
+            displayGesture("");
+            return;
+        }
+        const gesture = data.prediction || "";
+        displayGesture(gesture);
+        if (gesture && username.value) {
+            socket.emit("caption-update", { from: username.value, caption: gesture });
+        }
+    } catch (err) {
+        displayGesture("⚠ connecting…");
+    }
+}
+function startCaptionLoop() {
+    if (captionInterval) return;          
+    captionInterval = setInterval(processVideoFrame, 500); 
+}
+function stopCaptionLoop() {
+    if (captionInterval) {
+        clearInterval(captionInterval);
+        captionInterval = null;
+    }
+    displayGesture("");
+}
+const PeerConnection = (function () {
+    let pc;
+    const create = () => {
+        pc = new RTCPeerConnection({
+            iceServers: [
+                { urls: "stun:stun.l.google.com:19302" },
+                { urls: "stun:stun1.l.google.com:19302" }
+            ]
+        });
+        if (localStream) {
+            localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+        }
+        pc.ontrack = (e) => { remoteVideo.srcObject = e.streams[0]; };
+        pc.onicecandidate = (e) => {
+            if (e.candidate) socket.emit("icecandidate", e.candidate);
         };
-
-        peerConnection.onicecandidate = function(event) {
-            if (event.candidate) {
-                socket.emit("icecandidate", event.candidate);
+        pc.onconnectionstatechange = () => {
+            if (pc.connectionState === "connected") {
+                startCaptionLoop();
+            }
+            if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+                endCall();
             }
         };
-
-        return peerConnection;
+        return pc;
     };
-
     return {
         getInstance: () => {
-            if (!peerConnection || peerConnection.connectionState === "closed") {
-                peerConnection = createPeerConnection();
-            }
-            return peerConnection;
+            if (!pc || pc.connectionState === "closed") pc = create();
+            return pc;
         },
-        reset: () => {
-            peerConnection = null;
-        }
+        reset: () => { pc = null; }
     };
 })();
-
-createUserBtn.addEventListener("click", () => {
-    if (username.value !== "") {
-        const usernameContainer = document.querySelector(".username-input");
-        socket.emit("join-user", username.value);
-        usernameContainer.style.display = 'none';
-    }
+socket.on("caption-update", (data) => {
+    if (!data) return;
+    if (data.from && username.value && data.from === username.value) return;
+    const el = document.getElementById("remoteCaptionText");
+    if (el) el.innerText = `${data.from || "Remote"}: ${data.caption || ""}`;
 });
-
+createUserBtn.addEventListener("click", async () => {
+    const name = username.value.trim();
+    if (!name) return;
+    createUserBtn.disabled = true;
+    await startMyVideo();
+    socket.emit("join-user", name);
+    const sec = document.querySelector(".username-input");
+    if (sec) sec.style.display = "none";
+});
 endCallBtn.addEventListener("click", () => {
     socket.emit("call-ended", caller);
     endCall();
 });
-
 socket.on("joined", (allusers) => {
     allusersHtml.innerHTML = "";
     for (const user in allusers) {
         const li = document.createElement("li");
         li.textContent = `${user} ${user === username.value ? "(You)" : ""}`;
-
         if (user !== username.value) {
             const button = document.createElement("button");
             button.classList.add("call-btn");
@@ -6327,223 +6399,110 @@ socket.on("joined", (allusers) => {
             button.appendChild(img);
             li.appendChild(button);
         }
-
         allusersHtml.appendChild(li);
     }
 });
-
 socket.on("offer", async ({ from, to, offer }) => {
     const pc = PeerConnection.getInstance();
     await pc.setRemoteDescription(offer);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     socket.emit("answer", { from, to, answer: pc.localDescription });
-
     caller = [from, to];
-    endCallBtn.style.display = "block"; 
+    endCallBtn.style.display = "block";
+    startCaptionLoop(); 
 });
-
 socket.on("answer", async ({ from, to, answer }) => {
     const pc = PeerConnection.getInstance();
     await pc.setRemoteDescription(answer);
-
     caller = [from, to];
-    endCallBtn.style.display = "block"; 
+    endCallBtn.style.display = "block";
+    startCaptionLoop(); 
 });
-
 socket.on("icecandidate", async (candidate) => {
     const pc = PeerConnection.getInstance();
-    await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); }
+    catch (e) { console.warn("ICE error:", e); }
 });
-
-socket.on("call-ended", () => {
-    endCall();
-});
-
+socket.on("call-ended", () => endCall());
 const startCall = async (user) => {
     const pc = PeerConnection.getInstance();
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     socket.emit("offer", { from: username.value, to: user, offer: pc.localDescription });
-
-    endCallBtn.style.display = "block"; 
+    endCallBtn.style.display = "block";
 };
-
 const endCall = () => {
+    stopCaptionLoop();
     const pc = PeerConnection.getInstance();
-    if (pc) {
-        pc.close();
-    }
-
+    if (pc) pc.close();
     caller = [];
-    endCallBtn.style.display = "none"; 
+    endCallBtn.style.display = "none";
+    remoteVideo.srcObject = null;
     PeerConnection.reset();
 };
-
-async function startMyVideo() {
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        localVideo.srcObject = localStream;
-    } catch (error) {
-    }
-}
-
 muteBtn.addEventListener("click", () => {
-    if (localStream) {
-        const audioTrack = localStream.getAudioTracks()[0];
-        audioTrack.enabled = !audioTrack.enabled;
-        muteBtn.textContent = audioTrack.enabled ? "Mute" : "Unmute";
-    }
+    if (!localStream) return;
+    const t = localStream.getAudioTracks()[0];
+    t.enabled = !t.enabled;
+    muteBtn.textContent = t.enabled ? "Mute" : "Unmute";
 });
-
 videoToggleBtn.addEventListener("click", () => {
-    if (localStream) {
-        const videoTrack = localStream.getVideoTracks()[0];
-        videoTrack.enabled = !videoTrack.enabled;
-        videoToggleBtn.textContent = videoTrack.enabled ? "Video Off" : "Video On";
-    }
+    if (!localStream) return;
+    const t = localStream.getVideoTracks()[0];
+    t.enabled = !t.enabled;
+    videoToggleBtn.textContent = t.enabled ? "Video Off" : "Video On";
 });
-
-startMyVideo();
-
-const convertToBase64 = (canvas) => {
-    if (canvas && canvas.toDataURL) {
-        return canvas.toDataURL('image/jpeg');
-    }
-    return null;
-};
-
-const processVideoFrame = () => {
-    if (localVideo.videoWidth === 0 || localVideo.videoHeight === 0) {
-        return;  
-    }
-
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-
-    canvas.width = localVideo.videoWidth;
-    canvas.height = localVideo.videoHeight;
-
-    ctx.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
-
-    const base64Image = convertToBase64(canvas);
-
-    if (base64Image) {
-        console.log("Sending base64 image to server:", base64Image); 
-        detectHandGestures(base64Image);  
-    } else {
-    }
-};
-
-const detectHandGestures = async (image) => {
-    const formData = new FormData();
-
-    const base64Image = convertToBase64(image);
-    formData.append("frame", base64Image); 
-
-    console.log("Sending base64 image to server:", base64Image);  
-
-    const response = await fetch('http://127.0.0.1:5000/predict', {
-        method: 'POST',
-        body: formData
-    });
-
-    if (response.ok) {
-        const data = await response.json();
-        const predictedGesture = data.prediction || 'No Gesture';
-        displayGesture(predictedGesture);
-    } else {
-    }
-};
-
-const displayGesture = (gesture) => {
-    const ctx = localVideo.getContext('2d');  
-    ctx.font = "30px Arial";
-    ctx.fillStyle = "red";
-    ctx.fillText(gesture, 10, 50);  
-};
-
-setInterval(processVideoFrame, 100); 
-
-
-
 const startScreenSharing = async () => {
     try {
         screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-
+        const screenShareTrack = screenStream.getVideoTracks()[0];
         localVideo.srcObject = screenStream;
-
         const pc = PeerConnection.getInstance();
-
-        localStream.getTracks().forEach(track => {
-            if (track.kind === "video") {
-                const sender = pc.getSenders().find(s => s.track.kind === "video");
-                if (sender) {
-                    sender.replaceTrack(screenStream.getVideoTracks()[0]);
-                }
-            }
-        });
-
-        screenShareTrack = screenStream.getVideoTracks()[0];  
-        screenStream.getTracks().forEach(track => {
-            pc.addTrack(track, screenStream);
-        });
-
-        screenStream.getTracks().forEach(track => {
-            track.onended = () => {
-                stopScreenSharing();  
-            };
-        });
-
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+        if (sender) sender.replaceTrack(screenShareTrack);
+        screenShareTrack.onended = stopScreenSharing;
         isScreenSharing = true;
-    } catch (error) {
+        shareScreenBtn.textContent = "Stop Share";
+    } catch (e) {
     }
 };
-
 const stopScreenSharing = () => {
-    if (screenStream) {
-        screenStream.getTracks().forEach(track => track.stop());
+    if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; }
+    if (localStream) {
+        localVideo.srcObject = localStream;
+        const pc = PeerConnection.getInstance();
+        if (pc && pc.connectionState !== "closed") {
+            const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+            if (sender && localStream.getVideoTracks()[0]) {
+                sender.replaceTrack(localStream.getVideoTracks()[0]);
+            }
+        }
     }
-
-    localVideo.srcObject = localStream;
-
-    const pc = PeerConnection.getInstance();
-
-    const senders = pc.getSenders();
-    senders.forEach(sender => {
-        if (sender.track === screenShareTrack) {
-            sender.replaceTrack(localStream.getVideoTracks()[0]);  
-        }
-    });
-
-    localStream.getTracks().forEach(track => {
-        if (track.kind === "video" && track !== screenShareTrack) {
-            pc.addTrack(track, localStream);
-        }
-    });
-
     isScreenSharing = false;
+    shareScreenBtn.textContent = "Share Screen";
 };
-
 shareScreenBtn.addEventListener("click", () => {
-    if (isScreenSharing) {
-        stopScreenSharing();  
-    } else {
-        startScreenSharing();  
-    }
+    if (isScreenSharing) stopScreenSharing();
+    else startScreenSharing();
 });
-
-stopScreenShareBtn.addEventListener("click", () => {
-    stopScreenSharing();  
+stopScreenShareBtn.addEventListener("click", stopScreenSharing);
+window.addEventListener("beforeunload", () => {
+    stopCaptionLoop();
+    if (username.value) socket.emit("leave-user", username.value);
+    if (localStream) localStream.getTracks().forEach(t => t.stop());
 });
-
 async function startMyVideo() {
     try {
+        if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
         localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         localVideo.srcObject = localStream;
-    } catch (error) {
+        localVideo.muted = true;
+    } catch (err) {
+        alert("Could not access camera/microphone: " + err.message);
     }
 }
+startMyVideo();
 ```
 
 ### `public/js/socket.io.js`
@@ -6561,60 +6520,90 @@ import cv2
 import mediapipe as mp
 import pickle
 import os
+import threading
 app = Flask(__name__)
 CORS(app)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 model_path = os.path.join(BASE_DIR, '..', 'models', 'model.pkl')
 try:
-    with open(model_path, 'rb') as file:
-        model = pickle.load(file)
+    with open(model_path, 'rb') as f:
+        model = pickle.load(f)
 except Exception as e:
     model = None
 mp_hands = mp.solutions.hands
 hands_detector = mp_hands.Hands(
     static_image_mode=True,
-    max_num_hands=2,
-    min_detection_confidence=0.5
+    max_num_hands=1,        
+    min_detection_confidence=0.5,
 )
+_lock = threading.Lock()
+@app.route('/', methods=['GET'])
+def health():
+    return jsonify({'status': 'ok', 'model': model is not None}), 200
 @app.route('/predict', methods=['POST'])
 def predict():
     if model is None:
         return jsonify({'error': 'Model not loaded'}), 500
+    if not _lock.acquire(blocking=False):
+        return jsonify({'prediction': '', 'skipped': True}), 503
     try:
-        if 'frame' not in request.form:
-            return jsonify({'error': 'No frame in request'}), 400
-        image_data = request.form['frame']
+        image_data = request.form.get('frame', '')
         if not image_data:
-            return jsonify({'error': 'Received empty image data'}), 400
+            return jsonify({'error': 'No frame in request'}), 400
         if ',' in image_data:
             image_data = image_data.split(',', 1)[1]
-        image_bytes = base64.b64decode(image_data)
+        try:
+            image_bytes = base64.b64decode(image_data)
+        except Exception:
+            return jsonify({'error': 'Invalid base64'}), 400
         nparr = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        img   = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if img is None:
-            return jsonify({'error': 'Failed to decode image'}), 400
-        max_dim = 640
+            return jsonify({'error': 'Failed to decode image — check JPEG encoding'}), 400
+        max_dim = 320
         h, w = img.shape[:2]
         if max(h, w) > max_dim:
             scale = max_dim / max(h, w)
-            img = cv2.resize(img, (int(w * scale), int(h * scale)))
+            img = cv2.resize(img, (int(w * scale), int(h * scale)),
+                             interpolation=cv2.INTER_AREA)
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         results = hands_detector.process(img_rgb)
         if not results.multi_hand_landmarks:
-            return jsonify({'prediction': ''})
+            return jsonify({'prediction': ''})   
         data = []
         for hand_landmarks in results.multi_hand_landmarks:
             for point in mp_hands.HandLandmark:
-                landmark = hand_landmarks.landmark[point]
-                data.extend([landmark.x, landmark.y, landmark.z])
-        if len(data) != model.n_features_in_:
-            return jsonify({'error': 'Incorrect input size for model'})
+                lm = hand_landmarks.landmark[point]
+                data.extend([lm.x, lm.y, lm.z])
+        expected = model.n_features_in_
+        if len(data) < expected:
+            data.extend([0.0] * (expected - len(data)))
+        elif len(data) > expected:
+            data = data[:expected]
         prediction = model.predict([data])[0]
-        return jsonify({'prediction': prediction})
+        return jsonify({'prediction': str(prediction)})
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 500
+    finally:
+        _lock.release()
 if __name__ == '__main__':
-    app.run(debug=False, threaded=False)
+    app.run(debug=False, threaded=False, host='0.0.0.0', port=5000)
+```
+
+### `server/gunicorn.conf.py`
+
+```python
+import multiprocessing
+workers = 1
+worker_class = "gevent"
+timeout = 120
+graceful_timeout = 30
+keepalive = 5
+import os
+bind = f"0.0.0.0:{os.environ.get('PORT', '10000')}"
+accesslog = "-"
+errorlog  = "-"
+loglevel  = "info"
 ```
 
 ### `server.js`
